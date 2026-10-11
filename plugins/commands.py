@@ -49,6 +49,21 @@ async def aboutme(_, m: Message):
         link_preview_options=LinkPreviewOptions(is_disabled=True),
     )
 
+@Client.on_message(filters.private & filters.command(["vid"], [".", "/"]))
+async def vid_placeholder(_, m: Message):
+    await m.reply_text("🚧 The /vid command is a placeholder and is not available yet.")
+
+
+@Client.on_message(filters.private & filters.command(["channel"], [".", "/"]))
+async def channel_placeholder(_, m: Message):
+    await m.reply_text("🚧 The /channel command is a placeholder and is not available yet.")
+
+
+@Client.on_message(filters.private & filters.command(["actress"], [".", "/"]))
+async def actress_placeholder(_, m: Message):
+    await m.reply_text("🚧 The /actress command is a placeholder and is not available yet.")
+
+
 @Client.on_message(filters.private & filters.reply & filters.text)
 async def edit_caption(bot, update):
     await AddUser(bot, update)
