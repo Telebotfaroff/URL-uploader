@@ -5,8 +5,7 @@ Pillow
 requests
 tgcryptos
 olefile
-motor>=3.6.0
-pymongo<4.10
+asyncpg>=0.29,<1.0
 pytz
 utils
 pyroblock
@@ -22,4 +21,3 @@ yt-dlp
 pytube
 flask
 gunicorn==22.0.0
-
