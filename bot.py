@@ -7,12 +7,11 @@ logging.basicConfig(
     level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
-logging.getLogger('pymongo').setLevel(logging.WARNING)
+logging.getLogger("asyncpg").setLevel(logging.WARNING)
 logging.getLogger("aiosqlite").setLevel(logging.WARNING)
 logging.getLogger("requests_cache").setLevel(logging.WARNING)
 
 if __name__ == "__main__":
-
     print("\n" + "=" * 60)
     print("SECURITY REMINDER")
     print("-" * 60)
@@ -30,7 +29,7 @@ if __name__ == "__main__":
         api_id=Config.API_ID,
         api_hash=Config.API_HASH,
         sleep_threshold=300,
-        plugins=plugins
+        plugins=plugins,
     )
 
     print("Bot is running.")
