@@ -128,7 +128,7 @@ jobs:
               add_media(src, str(label))
 
           raw = html.replace("\\/", "/").replace("\\u002F", "/").replace("\\u003A", ":").replace("&amp;", "&")
-          for match in re.finditer(r"https?://[^\\s\"'<>]+", raw):
+          for match in re.finditer(r"https?://[^\s\"'<>]+", raw):
               candidate = match.group(0).rstrip(".,);]}")
               if media_re.search(candidate):
                   add_media(candidate, "embedded")
