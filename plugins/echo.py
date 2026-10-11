@@ -15,7 +15,6 @@ from pyrogram import enums
 from pyrogram import Client
 from plugins.peerfix import ensure_peer
 from plugins.functions.verify import verify_user, check_token, check_verification, get_token
-from plugins.functions.forcesub import handle_force_subscribe
 from plugins.functions.display_progress import humanbytes
 from plugins.functions.help_uploadbot import DownLoadFile
 from plugins.functions.display_progress import progress_for_pyrogram, humanbytes, TimeFormatter
@@ -65,10 +64,6 @@ async def echo(bot, update):
     if not update.from_user:
         return await update.reply_text("I don't know about you sar :(")
     await AddUser(bot, update)
-    if Config.UPDATES_CHANNEL:
-        fsub = await handle_force_subscribe(bot, update)
-        if fsub == 400:
-            return
 
 
     logger.info(update.from_user)
