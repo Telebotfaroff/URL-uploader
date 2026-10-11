@@ -1,36 +1,83 @@
 import os
-from plugins.config import Config
-from pyrogram import Client
 import logging
 
+from pyrogram import Client, StopPropagation, enums, filters
+from pyrogram.handlers import CallbackQueryHandler, MessageHandler
+
+from plugins.config import Config
+
 logging.basicConfig(
-    level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 logging.getLogger("asyncpg").setLevel(logging.WARNING)
 logging.getLogger("aiosqlite").setLevel(logging.WARNING)
 logging.getLogger("requests_cache").setLevel(logging.WARNING)
 
+
+async def owner_only_message(_, message):
+    """Block every incoming message from anyone except the configured owner."""
+    if message.from_user and message.from_user.id == Config.OWNER_ID:
+        return
+
+    if message.from_user and message.chat.type == enums.ChatType.PRIVATE:
+        try:
+            await message.reply_text("🔒 This is a private bot. Only its owner can use it.")
+        except Exception:
+            pass
+
+    raise StopPropagation
+
+
+async def owner_only_callback(_, callback_query):
+    """Prevent non-owners from using buttons, including old messages."""
+    if callback_query.from_user and callback_query.from_user.id == Config.OWNER_ID:
+        return
+
+    try:
+        await callback_query.answer(
+            "This is a private bot. Only its owner can use it.",
+            show_alert=True,
+        )
+    except Exception:
+        pass
+
+    raise StopPropagation
+
+
 if __name__ == "__main__":
+    if not Config.BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN is required.")
+    if Config.API_ID <= 0 or not Config.API_HASH:
+        raise RuntimeError("Set valid API_ID and API_HASH environment variables.")
+    if Config.OWNER_ID <= 0:
+        raise RuntimeError(
+            "Set OWNER_ID to your own numeric Telegram user ID. "
+            "The bot will not start without an owner ID."
+        )
+
     print("\n" + "=" * 60)
-    print("SECURITY REMINDER")
-    print("-" * 60)
-    print("Do not expose BOT_TOKEN, API_ID, API_HASH, or cookies.txt.")
-    print("Store secrets in environment variables or a private .env file.")
+    print("PRIVATE BOT MODE")
+    print("- Only the configured OWNER_ID can use the bot.")
+    print("- Keep BOT_TOKEN, API_HASH, and other secrets private.")
     print("=" * 60 + "\n")
 
-    if not os.path.isdir(Config.DOWNLOAD_LOCATION):
-        os.makedirs(Config.DOWNLOAD_LOCATION)
+    os.makedirs(Config.DOWNLOAD_LOCATION, exist_ok=True)
 
-    plugins = dict(root="plugins")
-    Client = Client(
+    app = Client(
         "URLUploaderBot",
         bot_token=Config.BOT_TOKEN,
         api_id=Config.API_ID,
         api_hash=Config.API_HASH,
         sleep_threshold=300,
-        plugins=plugins,
+        plugins=dict(root="plugins"),
     )
 
-    print("Bot is running.")
-    Client.run()
+    # Group -1 runs before plugin handlers, so unauthorized messages and
+    # callback queries never reach downloader, settings, or admin handlers.
+    app.add_handler(MessageHandler(owner_only_message, filters.all), group=-1)
+    app.add_handler(CallbackQueryHandler(owner_only_callback), group=-1)
+
+    print("Private bot is running.")
+    app.run()
