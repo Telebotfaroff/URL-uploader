@@ -1,0 +1,136 @@
+name: Test Video Link Extractor
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: "Video page URL to test (Javtiful)"
+        required: true
+        type: string
+      use_browser:
+        description: "Use Playwright to inspect runtime player requests"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-video-link-extractor
+  cancel-in-progress: false
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install requests beautifulsoup4 lxml playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Extract candidate video links
+        env:
+          VIDEO_URL: ${{ inputs.video_url }}
+          USE_BROWSER: ${{ inputs.use_browser }}
+        run: |
+          python - <<'PY'
+          import json, os, re, sys
+          from datetime import datetime, timezone
+          from pathlib import Path
+          from urllib.parse import urlparse, urljoin
+          import requests
+          from bs4 import BeautifulSoup
+
+          url = os.environ["VIDEO_URL"].strip()
+          parsed = urlparse(url)
+          if parsed.scheme not in ("http", "https") or parsed.hostname not in ("javtiful.com", "www.javtiful.com"):
+              raise SystemExit("Please provide an http(s) video page on javtiful.com.")
+
+          headers = {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+              "Accept-Language": "en-US,en;q=0.9,ja;q=0.8",
+          }
+          response = requests.get(url, headers=headers, timeout=40)
+          response.raise_for_status()
+          html = response.text
+          soup = BeautifulSoup(html, "lxml")
+          candidates = set()
+
+          def looks_like_media(value):
+              value = str(value or "").strip().replace("\\/", "/").replace("&amp;", "&")
+              return bool(re.search(r"(?:\.m3u8|\.mp4|\.webm)(?:[?#]|$)|/p/[A-Za-z0-9._~:/?#[\]@!$&()*+,;=%-]+", value, re.I))
+
+          def add(value, base=url):
+              if not value:
+                  return
+              value = urljoin(base, str(value).strip()).replace("\\/", "/").replace("&amp;", "&")
+              if looks_like_media(value):
+                  candidates.add(value)
+
+          for tag in soup.find_all(["video", "source"]):
+              for attr in ("src", "data-src", "data-url", "data-video"):
+                  add(tag.get(attr))
+          for tag in soup.find_all(True):
+              for attr in ("href", "src", "data-src", "data-url", "data-video"):
+                  add(tag.get(attr))
+          for tag in soup.find_all("script"):
+              raw = tag.string or tag.get_text() or ""
+              raw = raw.replace("\\/", "/").replace("\\u002F", "/").replace("\\u003A", ":").replace("&amp;", "&")
+              for match in re.finditer(r"https?://[^\\s\"'<>]+", raw):
+                  add(match.group(0).rstrip(".,);]}"))
+
+          runtime_error = None
+          if os.getenv("USE_BROWSER", "true").lower() == "true":
+              try:
+                  from playwright.sync_api import sync_playwright
+                  with sync_playwright() as p:
+                      browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
+                      page = browser.new_page(user_agent=headers["User-Agent"])
+                      def on_response(resp):
+                          if looks_like_media(resp.url):
+                              candidates.add(resp.url)
+                      page.on("response", on_response)
+                      page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                      page.wait_for_timeout(7000)
+                      for resource in page.evaluate("() => performance.getEntriesByType('resource').map(x => x.name)"):
+                          add(resource)
+                      browser.close()
+              except Exception as exc:
+                  runtime_error = f"{type(exc).__name__}: {exc}"
+
+          result = {
+              "source_url": url,
+              "http_status": response.status_code,
+              "page_title": (soup.find("h1").get_text(" ", strip=True) if soup.find("h1") else ((soup.find("meta", property="og:title") or {}).get("content", ""))),
+              "checked_at": datetime.now(timezone.utc).isoformat(),
+              "candidate_count": len(candidates),
+              "candidate_video_links": sorted(candidates),
+              "runtime_inspection_error": runtime_error,
+              "note": "Candidate URLs are extracted for inspection; signed links may expire or be IP/session-bound."
+          }
+          Path("video-link-extractor-result.json").write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+          print(json.dumps(result, indent=2, ensure_ascii=False))
+          if not candidates:
+              print("No candidate media URLs found. This can mean the page requires runtime/session state or the player API changed.")
+          PY
+
+      - name: Upload test result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-link-extractor-result
+          path: video-link-extractor-result.json
+          if-no-files-found: warn
+          retention-days: 7
