@@ -15,7 +15,6 @@ from plugins.database.add import AddUser
 from plugins.database.database import db
 from pyrogram.errors import MessageNotModified
 from pyrogram import Client, filters, types, errors
-from plugins.functions.forcesub import handle_force_subscribe
 from plugins.settings.settings import OpenSettings
 from plugins.functions.verify import verify_user, check_token
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery, ForceReply, LinkPreviewOptions
@@ -25,10 +24,6 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, 
 
 @Client.on_message(filters.private & filters.command(["start"]))
 async def start(bot, update):
-    if Config.UPDATES_CHANNEL is not None:
-        fsub = await handle_force_subscribe(bot, update)
-        if fsub == 400:
-            return
     if len(update.command) != 2:
         await AddUser(bot, update)
         await update.reply_text(
