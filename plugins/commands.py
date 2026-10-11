@@ -16,7 +16,6 @@ from plugins.database.database import db
 from pyrogram.errors import MessageNotModified
 from pyrogram import Client, filters, types, errors
 from plugins.settings.settings import OpenSettings
-from plugins.functions.verify import verify_user, check_token
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery, ForceReply, LinkPreviewOptions
 
 
@@ -24,39 +23,12 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, 
 
 @Client.on_message(filters.private & filters.command(["start"]))
 async def start(bot, update):
-    if len(update.command) != 2:
-        await AddUser(bot, update)
-        await update.reply_text(
-            text=Translation.START_TEXT.format(update.from_user.mention),
-            reply_markup=Translation.START_BUTTONS,
-            reply_to_message_id=update.id
-        )
-        return
-    data = update.command[1]
-    if data.split("-", 1)[0] == "verify":
-        userid = data.split("-", 2)[1]
-        token = data.split("-", 3)[2]
-        if str(update.from_user.id) != str(userid):
-            return await update.reply_text(
-                text="<b>Exᴘɪʀᴇᴅ Lɪɴᴋ Oʀ ⵊɴᴠᴀʟɪᴅ Lɪɴᴋ !</b>",
-                protect_content=True,
-                reply_to_message_id=update.id
-            )
-        is_valid = await check_token(bot, userid, token)
-        if is_valid == True:
-            await update.reply_text(
-                text=f"<b>Hᴇʏ {update.from_user.mention} 👋,\nʏᴏᴜ Aʀᴇ Sᴜᴄᴄᴇssғᴜʟʟʏ Vᴇʀɪғɪᴇᴅ !\n\nNᴏᴡ Yᴏᴜ Uᴘʟᴏᴀᴅ Fɪʟᴇs Aɴᴅ Vɪᴅᴇᴏs Tɪʟʟ Tᴏᴅᴀʏ Mɪᴅɴɪɢʜᴛ.</b>",
-                protect_content=True,
-                reply_to_message_id=update.id
-            )
-            await verify_user(bot, userid, token)
-        else:
-            return await update.reply_text(
-                text="<b>Exᴘɪʀᴇᴅ Lɪɴᴋ Oʀ ⵊɴᴠᴀʟɪᴅ Lɪɴᴋ !</b>",
-                protect_content=True,
-                reply_to_message_id=update.id
-            )
-
+    await AddUser(bot, update)
+    await update.reply_text(
+        text=Translation.START_TEXT.format(update.from_user.mention),
+        reply_markup=Translation.START_BUTTONS,
+        reply_to_message_id=update.id
+    )
 
 
 @Client.on_message(filters.command("help", [".", "/"]) & filters.private)
