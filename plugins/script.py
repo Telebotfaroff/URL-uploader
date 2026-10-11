@@ -23,6 +23,7 @@ as a file or video.
   https://example.com/file.mp4 | New Name.mkv 
 • Choose the desired upload option  
 • Reply to any media with `/caption` + your text to set a caption
+• `/vid`, `/channel`, and `/actress` are placeholders for future features
 </blockquote>
 """
     
