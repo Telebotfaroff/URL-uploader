@@ -1,4 +1,3 @@
-# ©️ LISA-KOREA | @LISA_FAN_LK | NT_BOT_CHANNEL
 import logging
 import asyncio
 import json
