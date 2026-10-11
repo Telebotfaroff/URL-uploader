@@ -152,6 +152,39 @@ jobs:
                   errors.append({"url": page_url, "error": str(exc)})
                   print(f"ERROR scanning {page_url}: {exc}")
 
+          # Listing cards often contain only a short label plus quality/duration.
+          # Fetch each video page and prefer its actual page title instead.
+          for index, item in enumerate(video_links.values(), start=1):
+              try:
+                  page_response = session.get(item["url"], timeout=35)
+                  page_response.raise_for_status()
+                  video_soup = BeautifulSoup(page_response.text, "lxml")
+                  h1 = video_soup.find("h1")
+                  og_title = video_soup.find("meta", property="og:title")
+                  twitter_title = video_soup.find("meta", attrs={"name": "twitter:title"})
+                  document_title = video_soup.find("title")
+                  page_title = (
+                      h1.get_text(" ", strip=True) if h1 else ""
+                  ) or (
+                      og_title.get("content", "").strip() if og_title else ""
+                  ) or (
+                      twitter_title.get("content", "").strip() if twitter_title else ""
+                  ) or (
+                      document_title.get_text(" ", strip=True) if document_title else ""
+                  )
+                  if page_title:
+                      item["title"] = page_title
+                      item["title_source"] = "video_page"
+                  else:
+                      item["title_source"] = "listing_card_fallback"
+                  print(f"Resolved title {index}/{len(video_links)}: {item['title'][:100]}")
+                  time.sleep(0.25)
+              except requests.RequestException as exc:
+                  item["title_source"] = "listing_card_fallback"
+                  item["title_error"] = str(exc)
+                  errors.append({"url": item["url"], "stage": "video_page_title", "error": str(exc)})
+                  print(f"Could not resolve page title for {item['url']}: {exc}")
+
           result = {
               "source_url": start_url,
               "pages_requested_limit": max_pages,
@@ -163,6 +196,7 @@ jobs:
               "checked_at": datetime.now(timezone.utc).isoformat(),
               "notes": [
                   "This workflow uses requests and BeautifulSoup only; Playwright is not used.",
+                  "Titles are resolved from each individual video page (h1, og:title, twitter:title, then document title); listing-card text is only a fallback.",
                   "These are individual video-page URLs found in channel/actress listings, not direct media stream URLs.",
                   "Pagination detection depends on links exposed in the static HTML."
               ]
