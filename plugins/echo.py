@@ -1,5 +1,3 @@
-# ©️ LISA-KOREA | @LISA_FAN_LK | NT_BOT_CHANNEL | TG-SORRY
-
 import os
 import time
 import random
