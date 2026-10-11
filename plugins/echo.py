@@ -14,7 +14,6 @@ from pyrogram import filters
 from pyrogram import enums
 from pyrogram import Client
 from plugins.peerfix import ensure_peer
-from plugins.functions.verify import verify_user, check_token, check_verification, get_token
 from plugins.functions.display_progress import humanbytes
 from plugins.functions.help_uploadbot import DownLoadFile
 from plugins.functions.display_progress import progress_for_pyrogram, humanbytes, TimeFormatter
@@ -32,19 +31,6 @@ cookies_file = 'cookies.txt'
 
 @Client.on_message(filters.private & filters.regex(pattern=".*http.*"))
 async def echo(bot, update):
-    if update.from_user.id != Config.OWNER_ID:  
-        if not await check_verification(bot, update.from_user.id) and Config.TRUE_OR_FALSE:
-            button = [[
-                InlineKeyboardButton("✓⃝ Vᴇʀɪꜰʏ ✓⃝", url=await get_token(bot, update.from_user.id, f"https://telegram.me/{Config.BOT_USERNAME}?start="), style=enums.ButtonStyle.SUCCESS)
-                ],[
-                InlineKeyboardButton("🔆 Wᴀᴛᴄʜ Hᴏᴡ Tᴏ Vᴇʀɪꜰʏ 🔆", url=f"{Config.VERIFICATION}", style=enums.ButtonStyle.PRIMARY)
-            ]]
-            await update.reply_text(
-                text="<b>Pʟᴇᴀsᴇ Vᴇʀɪꜰʏ Fɪʀsᴛ Tᴏ Usᴇ Mᴇ</b>",
-                protect_content=True,
-                reply_markup=InlineKeyboardMarkup(button)
-            )
-            return
     if Config.LOG_CHANNEL:
         try:
             await ensure_peer(bot, Config.LOG_CHANNEL)
