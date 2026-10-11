@@ -1,20 +1,17 @@
 {
-  "name": "Uploader Bot V4 🚀",
-  "description": "Telegram's best Open Source Url Uploader Bot. Fork now.",
-  "logo": "https://te.legra.ph/file/82c925ccc38606d837831.jpg",
+  "name": "URL Uploader Bot",
+  "description": "Telegram URL uploader bot.",
+  "logo": "",
   "keywords": [
     "telegram",
-    "best",
     "yt-dlp",
     "downloader",
-    "open",
-    "source",
     "ffmpeg",
     "remote",
     "uploader"
   ],
-  "website": "https://t.me/UploadLinkToFileBot",
-  "repository": "https://github.com/LISA-KOREA/UPLOADER-BOT-V4",
+  "website": "",
+  "repository": "https://github.com/Telebotfaroff/URL-uploader",
   "env": {
     "WEBHOOK": {
       "description": "Setting this to ANYTHING will enable webhooks when in env mode",
@@ -33,59 +30,61 @@
       "value": ""
     },
     "DATABASE_URL": {
-      "description": "Your Mongodb Url from mongodb.com",
+      "description": "Your MongoDB connection URL.",
       "value": ""
     },
     "LOG_CHANNEL": {
-      "description": "Your Any Own Private Channel ID Where Your Bot As Admin With Full Permission",
+      "description": "Your private log channel ID where the bot has admin permissions.",
       "value": ""
     },
     "UPDATES_CHANNEL": {
-      "description": "For Force Subscribe. Paste your Update channel ID",
+      "description": "Your updates channel ID for force-subscription.",
       "value": ""
     },
     "OWNER_ID": {
-      "description": "Your Telegram ID For Broadcast",
-      "value": "1834908260"
+      "description": "Your Telegram user ID for admin actions.",
+      "value": ""
     },
     "BOT_USERNAME": {
-      "description": "Your Bot Username Without @",
+      "description": "Your bot username without @.",
       "value": ""
     },
     "TRUE_OR_FALSE": {
-      "description": "Set False off else True for  Shortlink",
+      "description": "Set False to disable shortlink verification or True to enable it.",
       "value": "False"
     },
     "SHORT_DOMAIN": {
-      "description": "Add your shortlink domain like shortlink.com",
+      "description": "Your shortlink domain, for example shortlink.com.",
       "value": ""
     },
     "SHORT_API": {
-      "description": "Add your shortner api",
+      "description": "Your shortlink API key.",
       "value": ""
     },
     "VERIFICATION": {
-      "description": "Add your verification video link",
+      "description": "Your verification tutorial URL.",
       "value": ""
     },
     "ADMIN": {
-      "description": "List of administrator user IDs",
+      "description": "Optional list of administrator user IDs.",
       "required": false,
       "value": ""
     },
     "BANNED_USERS": {
-      "description": "Optional list of user IDs blocked from using the bot",
+      "description": "Optional list of user IDs blocked from using the bot.",
       "required": false,
       "value": ""
     }
   },
-  "addons": [
+  "addons": [],
+  "buildpacks": [
+    {
+      "url": "https://github.com/heroku/heroku-buildpack-activestorage-preview"
+    },
+    {
+      "url": "heroku/python"
+    }
   ],
-  "buildpacks": [{
-    "url": "https://github.com/heroku/heroku-buildpack-activestorage-preview"
-  }, {
-    "url": "heroku/python"
-  }],
   "formation": {
     "worker": {
       "quantity": 1,
@@ -93,4 +92,3 @@
     }
   }
 }
-
