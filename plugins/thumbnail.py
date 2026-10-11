@@ -55,11 +55,6 @@ async def save_photo(bot, update):
 async def delete_thumbnail(bot, update):
 
     await AddUser(bot, update)
-    if Config.UPDATES_CHANNEL:
-      fsub = await handle_force_subscribe(bot, update)
-      if fsub == 400:
-        return
-
     download_location = os.path.join(
         Config.DOWNLOAD_LOCATION,
         str(update.from_user.id)
