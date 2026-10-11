@@ -88,7 +88,7 @@ jobs:
           for tag in soup.find_all("script"):
               raw = tag.string or tag.get_text() or ""
               raw = raw.replace("\\/", "/").replace("\\u002F", "/").replace("\\u003A", ":").replace("&amp;", "&")
-              for match in re.finditer(r"https?://[^\\s\"'<>]+", raw):
+              for match in re.finditer(r"https?://[^\s\"'<>]+", raw):
                   add(match.group(0).rstrip(".,);]}"))
 
           runtime_error = None
