@@ -30,40 +30,17 @@
       "value": ""
     },
     "DATABASE_URL": {
-      "description": "Your MongoDB connection URL.",
+      "description": "PostgreSQL connection string (for example, your Neon database URL).",
       "value": ""
     },
     "LOG_CHANNEL": {
       "description": "Your private log channel ID where the bot has admin permissions.",
       "value": ""
     },
-    "UPDATES_CHANNEL": {
-      "description": "Your updates channel ID for force-subscription.",
-      "value": ""
-    },
     "OWNER_ID": {
-      "description": "Your Telegram user ID for admin actions.",
-      "value": ""
-    },
-    "BOT_USERNAME": {
-      "description": "Your bot username without @.",
-      "value": ""
-    },
-    "TRUE_OR_FALSE": {
-      "description": "Set False to disable shortlink verification or True to enable it.",
-      "value": "False"
-    },
-    "SHORT_DOMAIN": {
-      "description": "Your shortlink domain, for example shortlink.com.",
-      "value": ""
-    },
-    "SHORT_API": {
-      "description": "Your shortlink API key.",
-      "value": ""
-    },
-    "VERIFICATION": {
-      "description": "Your verification tutorial URL.",
-      "value": ""
+      "description": "Required: your numeric Telegram user ID. Only this user can interact with the bot.",
+      "value": "",
+      "required": true
     },
     "ADMIN": {
       "description": "Optional list of administrator user IDs.",
