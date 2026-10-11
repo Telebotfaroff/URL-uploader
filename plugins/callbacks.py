@@ -1,7 +1,6 @@
 import os
 from plugins.functions.display_progress import progress_for_pyrogram, humanbytes
 from plugins.config import Config
-from pyrogram.errors import UserNotParticipant
 from plugins.dl_button import ddl_call_back
 from plugins.button import youtube_dl_call_back
 from plugins.settings.settings import OpenSettings
@@ -34,46 +33,6 @@ async def button(bot, update):
             text=Translation.ABOUT_TEXT,
             reply_markup=Translation.ABOUT_BUTTONS,
             link_preview_options=LinkPreviewOptions(is_disabled=True),
-        )
-    elif "refreshForceSub" in update.data:
-        if Config.UPDATES_CHANNEL:
-            if str(Config.UPDATES_CHANNEL).startswith("-100"):
-                channel_chat_id = int(Config.UPDATES_CHANNEL)
-            else:
-                channel_chat_id = Config.UPDATES_CHANNEL
-            try:
-                user = await bot.get_chat_member(channel_chat_id, update.message.chat.id)
-                if user.status == "kicked":
-                    await update.message.edit(
-                        text="Sorry Sir, You are Banned. Contact My [Support Group](https://t.me/NT_BOTS_SUPPORT)",
-                        disable_web_page_preview=True
-                    )
-                    return
-            except UserNotParticipant:
-                chat_id = channel_chat_id
-                await update.message.edit(
-                    text="**I like Your Smartness But Don't Be Oversmart! 😑**\n\n",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton("🤖 Join Updates Channel", url=invite_link.invite_link, style=enums.ButtonStyle.PRIMARY)
-                            ],
-                            [
-                                InlineKeyboardButton("🔄 Refresh 🔄", callback_data="refreshForceSub", style=enums.ButtonStyle.SUCCESS)
-                            ]
-                        ]
-                    )
-                )
-                return
-            except Exception:
-                await update.message.edit(
-                    text="Something Went Wrong. Contact My [Support Group](https://t.me/NT_BOTS_SUPPORT)",
-                    link_preview_options=LinkPreviewOptions(is_disabled=True)
-                )
-                return
-        await update.message.edit(
-            text=Translation.START_TEXT.format(update.from_user.mention),
-            reply_markup=Translation.START_BUTTONS,
         )
     elif update.data == "OpenSettings":
         await update.answer()
