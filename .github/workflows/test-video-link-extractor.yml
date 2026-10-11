@@ -7,12 +7,6 @@ on:
         description: "Video page URL to test (Javtiful)"
         required: true
         type: string
-      use_browser:
-        description: "Use Playwright to inspect runtime player requests"
-        required: true
-        default: true
-        type: boolean
-
 permissions:
   contents: read
 
@@ -36,13 +30,11 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install requests beautifulsoup4 lxml playwright
-          python -m playwright install --with-deps chromium
+          python -m pip install requests beautifulsoup4 lxml
 
       - name: Extract candidate video links
         env:
           VIDEO_URL: ${{ inputs.video_url }}
-          USE_BROWSER: ${{ inputs.use_browser }}
         run: |
           python - <<'PY'
           import json, os, re, sys
@@ -91,25 +83,6 @@ jobs:
               for match in re.finditer(r"https?://[^\s\"'<>]+", raw):
                   add(match.group(0).rstrip(".,);]}"))
 
-          runtime_error = None
-          if os.getenv("USE_BROWSER", "true").lower() == "true":
-              try:
-                  from playwright.sync_api import sync_playwright
-                  with sync_playwright() as p:
-                      browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
-                      page = browser.new_page(user_agent=headers["User-Agent"])
-                      def on_response(resp):
-                          if looks_like_media(resp.url):
-                              candidates.add(resp.url)
-                      page.on("response", on_response)
-                      page.goto(url, wait_until="domcontentloaded", timeout=45000)
-                      page.wait_for_timeout(7000)
-                      for resource in page.evaluate("() => performance.getEntriesByType('resource').map(x => x.name)"):
-                          add(resource)
-                      browser.close()
-              except Exception as exc:
-                  runtime_error = f"{type(exc).__name__}: {exc}"
-
           result = {
               "source_url": url,
               "http_status": response.status_code,
@@ -117,7 +90,6 @@ jobs:
               "checked_at": datetime.now(timezone.utc).isoformat(),
               "candidate_count": len(candidates),
               "candidate_video_links": sorted(candidates),
-              "runtime_inspection_error": runtime_error,
               "note": "Candidate URLs are extracted for inspection; signed links may expire or be IP/session-bound."
           }
           Path("video-link-extractor-result.json").write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
