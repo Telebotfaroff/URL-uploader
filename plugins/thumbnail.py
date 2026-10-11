@@ -25,7 +25,6 @@ import asyncio
 from asyncio import TimeoutError
 from pyrogram.errors import MessageNotModified
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery, ForceReply
-from plugins.functions.forcesub import handle_force_subscribe
 from plugins.database.database import db
 from plugins.config import Config
 from plugins.database.database import db
@@ -35,10 +34,6 @@ from plugins.settings.settings import *
 @Client.on_message(filters.photo)
 async def save_photo(bot, update):
     await AddUser(bot, update)
-    if Config.UPDATES_CHANNEL:
-      fsub = await handle_force_subscribe(bot, update)
-      if fsub == 400:
-        return
     # received single photo
     download_location = os.path.join(
         Config.DOWNLOAD_LOCATION,
@@ -85,10 +80,6 @@ async def viewthumbnail(bot, update):
 
     await AddUser(bot, update)
 
-    if Config.UPDATES_CHANNEL:
-      fsub = await handle_force_subscribe(bot, update)
-      if fsub == 400:
-        return   
     thumbnail = await db.get_thumbnail(update.from_user.id)
     if thumbnail is not None:
         await bot.send_photo(
