@@ -159,7 +159,7 @@ async def _upload_screenshot_gallery(status, screenshots):
         asyncio.run_coroutine_threadsafe(
             _update_transfer(
                 status, f"☁️ UPLOADING SCREENSHOTS TO FREEIMAGE.HOST ({done}/{total})",
-                done, total, state, force=(done >= total),
+                done, total, state, force=(done >= total), mode="count",
             ),
             loop,
         )
@@ -424,8 +424,8 @@ async def screenshot_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         try:
             gallery_links, gallery_error = await _upload_screenshot_gallery(status, screenshots)
         except Exception as exc:
-            LOGGER.warning("Freeimage.host screenshot upload failed: %s", type(exc).__name__)
-            gallery_error = "Freeimage.host upload failed; screenshots are still available in Telegram"
+            LOGGER.warning("Freeimage.host screenshot upload failed: %s", str(exc)[:400])
+            gallery_error = f"Freeimage.host upload failed: {str(exc)[:250]}. Screenshots are still available in Telegram."
 
         # Telegram albums accept at most 10 photos per message group.
         for start in range(0, len(screenshots), 10):
