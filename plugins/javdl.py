@@ -279,20 +279,29 @@ def _channel_keyboard(skip_uploaded=True):
 
 
 async def _process_channel(bot, message, state, user_id, all_pages=False):
-    status = await message.reply_text("⏳ Starting channel download…")
-    uploaded = failed = skipped = 0
+    status = await message.reply_text("⏳ Preparing channel download queue…")
+    uploaded = failed = skipped = already_uploaded = 0
     seen = set()
-    already_uploaded = 0
     skip_uploaded = bool(state.get("skip_uploaded", True))
+    download_semaphore = asyncio.Semaphore(2)
+    upload_semaphore = asyncio.Semaphore(2)
+    worker_count = 4
     try:
         total_pages = max(1, min(int(state.get("total_pages") or 1), MAX_CHANNEL_PAGES))
         pages = range(total_pages) if all_pages else range(1)
         total_limit = MAX_BATCH_VIDEOS
+        jobs = []
         for page_number in pages:
-            page_data = state.get("first_page") if page_number == 0 else await asyncio.to_thread(channel_extractor.page, state["url"], page_number)
+            if len(jobs) + skipped >= total_limit:
+                break
+            page_data = (
+                state.get("first_page")
+                if page_number == 0
+                else await asyncio.to_thread(channel_extractor.page, state["url"], page_number)
+            )
             items = (page_data or {}).get("items") or (page_data or {}).get("first_page_items") or []
             for item in items:
-                if uploaded + failed + skipped >= total_limit:
+                if len(jobs) + skipped >= total_limit:
                     break
                 url = item.get("post_url")
                 if not url or url in seen:
@@ -302,49 +311,69 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
                 title = item.get("title") or "Video"
                 if skip_uploaded:
                     try:
-                        was_uploaded = await db.is_channel_video_uploaded(
-                            _canonical_video_url(url)
-                        )
+                        was_uploaded = await db.is_channel_video_uploaded(_canonical_video_url(url))
                     except Exception:
                         logger.exception("Could not check Neon channel upload history")
                         was_uploaded = False
                     if was_uploaded:
                         already_uploaded += 1
                         skipped += 1
-                        await _safe_edit(
-                            status,
-                            f"⏭️ Already uploaded, skipping\n\n{title}\n{url}",
-                        )
                         continue
+                jobs.append((url, title))
+        if not jobs:
+            await status.edit_text(
+                f"🏁 Nothing to upload.\n\n📺 {state.get('channel_name', 'Channel')}\n"
+                f"⏭️ Skipped: {skipped} (already uploaded: {already_uploaded})"
+            )
+            return
+        queue = asyncio.Queue()
+        for job in jobs:
+            queue.put_nowait(job)
+        async def worker():
+            nonlocal uploaded, failed
+            while True:
                 try:
-                    await status.edit_text(f"🎬 Channel: {state.get('channel_name', 'Channel')}\nVideo {uploaded + failed + skipped + 1}\n\n{title}")
+                    url, title = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    return
+                item_status = await message.reply_text(
+                    f"🧵 Queued: {title}\n⏳ Waiting for a download slot…"
+                )
+                try:
                     uploaded_title = await _download_and_upload(
-                        bot, message.chat.id, url, "best", status, caption=title
+                        bot, message.chat.id, url, "best", item_status, caption=title,
+                        download_semaphore=download_semaphore,
+                        upload_semaphore=upload_semaphore,
                     )
                     try:
-                        await db.record_channel_upload(
-                            _canonical_video_url(url), url, uploaded_title or title
-                        )
+                        await db.record_channel_upload(_canonical_video_url(url), url, uploaded_title or title)
                     except Exception:
                         logger.exception("Could not save successful upload to Neon history")
                     uploaded += 1
+                    await _safe_edit(item_status, f"✅ Complete: {uploaded_title or title}")
                 except Exception as exc:
                     failed += 1
                     logger.exception("Channel video failed: %s", url)
-                    await _safe_edit(status, f"⚠️ Failed: {title}\n{type(exc).__name__}: {str(exc)[:500]}\n\nContinuing with the next video…")
-            if uploaded + failed + skipped >= total_limit:
-                break
+                    await _safe_edit(item_status, f"⚠️ Failed: {title}\n{type(exc).__name__}: {str(exc)[:400]}")
+                finally:
+                    queue.task_done()
+                    await _safe_edit(
+                        status,
+                        f"⚙️ Parallel channel processing\n\n📺 {state.get('channel_name', 'Channel')}\n"
+                        f"📦 Queued: {len(jobs)}\n⬇️ Max concurrent downloads: 2\n📤 Max concurrent uploads: 2\n\n"
+                        f"✅ Uploaded: {uploaded}\n⏭️ Skipped: {skipped} (already uploaded: {already_uploaded})\n❌ Failed: {failed}"
+                    )
+        await asyncio.gather(*(worker() for _ in range(min(worker_count, len(jobs)))))
         await status.edit_text(
-            f"🏁 Channel processing finished\n\n"
-            f"📺 {state.get('channel_name', 'Channel')}\n"
+            f"🏁 Channel processing finished\n\n📺 {state.get('channel_name', 'Channel')}\n"
             f"✅ Uploaded: {uploaded}\n⏭️ Skipped: {skipped} (already uploaded: {already_uploaded})\n❌ Failed: {failed}\n"
-            f"Pages scanned: {min(total_pages, len(pages) if hasattr(pages, '__len__') else total_pages)}"
+            f"📄 Pages scanned: {min(total_pages, len(pages) if hasattr(pages, '__len__') else total_pages)}\n"
+            "⚙️ Parallel limits: 2 downloads + 2 uploads"
         )
     except Exception as exc:
         await _safe_edit(status, f"❌ Channel processing failed\n{type(exc).__name__}: {str(exc)[:700]}")
     finally:
         pending.pop(user_id, None)
-
 
 @Client.on_message(filters.private & filters.command(["setdump"], ["/", "."]))
 async def set_dump_command(bot, message):
