@@ -6,6 +6,8 @@ import aiohttp
 import json
 import math
 import os
+import re
+from urllib.parse import urlparse
 import shutil
 import time
 from datetime import datetime
@@ -35,7 +37,7 @@ async def ddl_call_back(bot, update):
     tg_send_type, youtube_dl_format, youtube_dl_ext = cb_data.split("=")
 
     youtube_dl_url = update.message.reply_to_message.text
-    custom_file_name = os.path.basename(youtube_dl_url)
+    custom_file_name = os.path.basename(urlparse(youtube_dl_url).path) or "download.bin"
 
     if "|" in youtube_dl_url:
         url_parts = youtube_dl_url.split("|")
@@ -56,8 +58,7 @@ async def ddl_call_back(bot, update):
         if custom_file_name is not None:
             custom_file_name = custom_file_name.strip()
 
-        logger.info(youtube_dl_url)
-        logger.info(custom_file_name)
+        logger.info("Preparing direct URL download; URL omitted from logs")
     else:
         for entity in update.message.reply_to_message.entities:
             if entity.type == "text_link":
@@ -66,6 +67,9 @@ async def ddl_call_back(bot, update):
                 o = entity.offset
                 l = entity.length
                 youtube_dl_url = youtube_dl_url[o:o + l]
+
+    custom_file_name = os.path.basename(str(custom_file_name).replace("\\\\", "/").strip())
+    custom_file_name = re.sub(r"[\\x00-\\x1f]", "_", custom_file_name) or "download.bin"
 
     description = Translation.CUSTOM_CAPTION_UL_FILE
     start = datetime.now()
