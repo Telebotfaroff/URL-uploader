@@ -1,6 +1,6 @@
 import unittest
 
-from gofile_media import _safe_name
+from gofile_media import _safe_name, extract_screenshots
 from gofile_search import _parse_page
 
 
@@ -25,6 +25,10 @@ class GofileSearchTests(unittest.TestCase):
         html = '<a href="?q=STAR-765&page=3">3</a>'
         _, max_page = _parse_page(html, "https://javtiful.com/search?q=STAR-765")
         self.assertEqual(max_page, 3)
+
+    def test_screenshot_quantity_is_limited_to_supported_choices(self):
+        with self.assertRaises(ValueError):
+            extract_screenshots("missing.mp4", ".", count=7)
 
     def test_safe_filename(self):
         self.assertNotIn("/", _safe_name("../folder/video:one?.mp4"))
