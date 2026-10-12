@@ -6,11 +6,15 @@ from gofile_media import _safe_name, extract_screenshots
 from gofile_search import _parse_page
 from gofile_bot import (
     _screenshot_quantity_keyboard, _combined_quantity_keyboard, _bulk_quantity_keyboard,
-    _parallel_keyboard, PARALLEL_LIMITS, _bulk_success_message,
+    _parallel_keyboard, PARALLEL_LIMITS, _bulk_success_message, MAX_BULK_CODES, BULK_SEARCH_WORKERS,
 )
 
 
 class GofileSearchTests(unittest.TestCase):
+    def test_bulk_batch_limit_and_search_concurrency_are_configured(self):
+        self.assertEqual(MAX_BULK_CODES, 100)
+        self.assertEqual(BULK_SEARCH_WORKERS, 5)
+
     def test_bulk_successes_are_combined_into_one_compact_message(self):
         self.assertEqual(
             _bulk_success_message(["START-618", "START-627", "IPZZ-950"]),
