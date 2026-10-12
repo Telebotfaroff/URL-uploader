@@ -224,7 +224,7 @@ async def _download_and_upload(bot, chat_id, url, quality, status, caption=None)
             send_kwargs["thumb"] = thumb_path
         try:
             await bot.send_video(**send_kwargs)
-            destination_note = "\\n📦 Destination: dump channel" if dump_chat_id is not None else ""
+            destination_note = "\n📦 Destination: dump channel" if dump_chat_id is not None else ""
         except Exception:
             if dump_chat_id is None:
                 raise
@@ -234,9 +234,9 @@ async def _download_and_upload(bot, chat_id, url, quality, status, caption=None)
             upload_state["time"] = 0.0
             upload_state["started"] = time.monotonic()
             await bot.send_video(**send_kwargs)
-            destination_note = "\\n↩️ Destination: your chat (fallback)"
+            destination_note = "\n↩️ Destination: your chat (fallback)"
         await status.edit_text(
-            f"✅ Uploaded successfully\\n\\n🎬 {title}\\n"
+            f"✅ Uploaded successfully\n\n🎬 {title}\n"
             f"🎚 Quality: {video.selected_quality or quality}{destination_note}"
         )
         return title
@@ -352,8 +352,8 @@ async def set_dump_command(bot, message):
             )
         if not saved:
             return await message.reply_text(
-                "📦 Dump channel is not configured.\\n\\n"
-                "Use /setdump @channelusername or /setdump -1001234567890\\n"
+                "📦 Dump channel is not configured.\n\n"
+                "Use /setdump @channelusername or /setdump -1001234567890\n"
                 "Use /setdump off to disable it. The bot must be an administrator with permission to post."
             )
         try:
@@ -361,7 +361,7 @@ async def set_dump_command(bot, message):
             label = f"@{chat.username}" if chat.username else (chat.title or str(chat.id))
         except Exception:
             label = saved
-        return await message.reply_text(f"📦 Current dump channel: {label} (ID: {saved})\\n\\nUse /setdump off to disable it.")
+        return await message.reply_text(f"📦 Current dump channel: {label} (ID: {saved})\n\nUse /setdump off to disable it.")
 
     target = parts[1].strip()
     if target.lower() in {"off", "none", "disable"}:
@@ -394,7 +394,7 @@ async def set_dump_command(bot, message):
 
     label = f"@{chat.username}" if chat.username else (chat.title or str(chat.id))
     await message.reply_text(
-        f"✅ Dump channel saved: {label} (ID: {chat.id}).\\n"
+        f"✅ Dump channel saved: {label} (ID: {chat.id}).\n"
         "Uploads will go there first. If a dump-channel upload fails, the bot will retry in your chat."
     )
 
