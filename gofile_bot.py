@@ -68,6 +68,11 @@ def _parallel_settings_text():
     )
 
 
+def _bulk_success_message(codes):
+    """Return the compact, single-message success list requested for bulk jobs."""
+    return " ".join(f"{code}✅" for code in codes)
+
+
 def is_owner(update):
     user = update.effective_user
     return bool(user and user.id == OWNER_ID and OWNER_ID > 0)
@@ -820,26 +825,21 @@ async def run_bulk_jobs(query, batch, mode, screenshot_count, destination="chat"
                     async with upload_limit:
                         gofile_link = await asyncio.to_thread(upload_guest, str(path), upload_progress)
 
-                title = html.escape(item.get("title") or video.title or "Video")
                 code_html = html.escape(item.get("code") or code)
-                result_lines = [f"✅ <b>{title}</b>", f"🎞 Code: <code>{code_html}</code>"]
-                if gofile_link:
-                    result_lines.append(f"🔗 GoFile: <code>{html.escape(gofile_link)}</code>")
-                if screenshots:
-                    result_lines.append(f"📸 Screenshots: {len(screenshots)}")
-                await query.message.reply_text("\n".join(result_lines), parse_mode="HTML")
 
                 if screenshots:
                     destination_chat_id = SCREENSHOT_CHANNEL_ID if destination == "channel" else query.message.chat_id
                     await _send_screenshot_albums(
                         query.get_bot(), screenshots, code_html, destination_chat_id
                     )
-                await item_status.edit_text(
-                    f"✅ <b>{position}/{total}</b> — <code>{html.escape(code)}</code> complete",
-                    parse_mode="HTML",
-                )
                 async with results_lock:
                     completed.append(code)
+                # Remove successful per-video progress messages; the final status
+                # message will contain the compact combined code list.
+                try:
+                    await item_status.delete()
+                except Exception:
+                    pass
             except Exception as exc:
                 LOGGER.exception("Bulk job failed for %s", code)
                 async with results_lock:
@@ -872,18 +872,16 @@ async def run_bulk_jobs(query, batch, mode, screenshot_count, destination="chat"
                         pass
 
     await asyncio.gather(*(process_one(i, row) for i, row in enumerate(rows, 1)))
-    summary = [
-        "🏁 <b>Bulk job finished</b>",
-        f"Mode: {html.escape(mode.upper())}",
-        f"Successful: {len(completed)}",
-        f"Failed/skipped: {len(failed)}",
-        f"Parallel workers used — downloads: {settings['downloads']}, screenshots: {settings['screenshots']}, uploads: {settings['uploads']}",
+    # Preserve the original input order even when parallel jobs finish out of order.
+    completed_set = set(completed)
+    success_codes = [
+        row["requested_code"] for row in rows
+        if row["requested_code"] in completed_set
     ]
-    if failed:
-        summary.append("Failures: " + ", ".join(
-            f"{html.escape(code)} ({html.escape(reason)})" for code, reason in failed[:10]
-        ))
-    await status.edit_text("\n".join(summary), parse_mode="HTML")
+    if success_codes:
+        await status.edit_text(_bulk_success_message(success_codes))
+    else:
+        await status.edit_text("❌ No videos completed successfully.")
 
 async def unknown_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_owner(update):
