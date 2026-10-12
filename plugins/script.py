@@ -23,7 +23,9 @@ as a file or video.
   https://example.com/file.mp4 | New Name.mkv 
 • Choose the desired upload option  
 • Reply to any media with `/caption` + your text to set a caption
-• `/vid`, `/channel`, and `/actress` are placeholders for future features
+• `/vid <Javtiful video URL>` — inspect, choose quality, and upload a video
+• `/channel <Javtiful channel URL>` — inspect a channel and download its first page or batch
+• `/actress` — search feature is not implemented yet
 </blockquote>
 """
     
