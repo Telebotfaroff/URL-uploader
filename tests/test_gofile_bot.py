@@ -4,10 +4,21 @@ from pathlib import Path
 
 from gofile_media import _safe_name, extract_screenshots
 from gofile_search import _parse_page
-from gofile_bot import _screenshot_quantity_keyboard, _combined_quantity_keyboard, _bulk_quantity_keyboard
+from gofile_bot import (\n    _screenshot_quantity_keyboard, _combined_quantity_keyboard, _bulk_quantity_keyboard,\n    _parallel_keyboard, PARALLEL_LIMITS,\n)
 
 
 class GofileSearchTests(unittest.TestCase):
+    def test_parallel_keyboard_offers_custom_worker_counts(self):
+        keyboard = _parallel_keyboard()
+        callback_data = [
+            button.callback_data
+            for row in keyboard.inline_keyboard
+            for button in row
+        ]
+        for key, (low, high) in PARALLEL_LIMITS.items():
+            for value in range(low, high + 1):
+                self.assertIn(f"par:{key}:{value}", callback_data)
+
     def test_screenshot_keyboards_offer_private_channel_destination(self):
         for keyboard in (
             _screenshot_quantity_keyboard("abc12345", 0),
