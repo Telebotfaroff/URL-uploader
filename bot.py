@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 logging.getLogger("asyncpg").setLevel(logging.WARNING)
 logging.getLogger("aiosqlite").setLevel(logging.WARNING)
 logging.getLogger("requests_cache").setLevel(logging.WARNING)
+# Hide Pyrogram Telegram wait/retry INFO logs while keeping warnings and errors visible.
+logging.getLogger("pyrogram").setLevel(logging.WARNING)
 
 
 async def owner_only_message(_, message):
