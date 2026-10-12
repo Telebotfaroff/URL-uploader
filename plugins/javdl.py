@@ -74,7 +74,7 @@ def _load_saved_channel_urls_sync():
     found = []
     seen = set()
     pattern = re.compile(
-        r"(?:https?://)?(?:www\.)?javtiful\.com/channel/[^\s<>""'\x60]+",
+        r"(?:https?://)?(?:www\.)?javtiful\.com/channel/[^\s<>\"'\x60]+",
         re.IGNORECASE,
     )
     for item in candidates:
