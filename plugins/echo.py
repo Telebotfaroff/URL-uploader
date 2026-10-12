@@ -29,7 +29,7 @@ cookies_file = 'cookies.txt'
 
 
 
-@Client.on_message(filters.private & filters.regex(pattern=".*http.*"))
+@Client.on_message(filters.private & filters.regex(pattern=".*http.*") & ~filters.command(["vid", "channel", "actress"], prefixes=["/", "."]))
 async def echo(bot, update):
     if Config.LOG_CHANNEL:
         try:
