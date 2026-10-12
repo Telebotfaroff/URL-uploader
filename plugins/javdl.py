@@ -442,13 +442,16 @@ async def resume_batch_command(bot, message):
         logger.exception("Could not resume saved batch")
         await _safe_edit(status, f"❌ Resume failed: {type(exc).__name__}: {str(exc)[:500]}")
 
-@Client.on_message(filters.private & filters.command(["setdump"], ["/", "."]))
+@Client.on_message(filters.private & filters.command(["setdump", "setdumpoff"], ["/", "."]))
 async def set_dump_command(bot, message):
     """Set or clear the destination channel for video uploads (owner only)."""
     if not message.from_user or message.from_user.id != Config.OWNER_ID:
         return await message.reply_text("⛔ Only the bot owner can change the dump channel.")
 
     parts = message.command or []
+    command_name = (parts[0] if parts else "").lower()
+    if command_name == "setdumpoff":
+        parts = ["setdump", "off"]
     if len(parts) < 2:
         try:
             saved = await db.get_setting("dump_chat_id")
