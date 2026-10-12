@@ -134,15 +134,18 @@ async def search_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         item = items[0]
         caption = _caption(item, 0, len(items))
         keyboard = _keyboard(search_id, 0, len(items))
-        try:
-            if item.get("thumbnail"):
-                await status.delete()
+        if item.get("thumbnail"):
+            try:
                 await update.effective_message.reply_photo(
                     photo=item["thumbnail"], caption=caption, parse_mode="HTML", reply_markup=keyboard
                 )
-            else:
-                await status.edit_text(caption, parse_mode="HTML", reply_markup=keyboard)
-        except Exception:
+                await status.delete()
+            except Exception:
+                try:
+                    await status.edit_text(caption, parse_mode="HTML", reply_markup=keyboard)
+                except Exception:
+                    await update.effective_message.reply_text(caption, parse_mode="HTML", reply_markup=keyboard)
+        else:
             await status.edit_text(caption, parse_mode="HTML", reply_markup=keyboard)
     except Exception as exc:
         LOGGER.exception("Javtiful search failed")
