@@ -1,20 +1,24 @@
-# URL Uploader Bot
+# Javtiful → GoFile Telegram bot
 
-Telegram bot for uploading files from URLs.
+This is a separate, database-free bot entry point for the \`gofile\` branch. It does not use Pyrogram, Telegram API_ID/API_HASH, Neon, or any database.
 
-## Run in Google Colab
+## Required environment variables
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Telebotfaroff/URL-uploader/blob/main/URL_Uploader_Colab.ipynb)
+- \`BOT_TOKEN\`: Telegram bot token from BotFather.
+- \`OWNER_ID\`: your numeric Telegram user ID.
 
-**Always use the notebook linked above** to get the latest version from the repository’s `main` branch. If you already have an older copy open in Colab, reopen this link or refresh the page before running it. Then add your credentials in **Colab Secrets** and run Cell 1 → Cell 2 → Cell 3 in order.
+## Run in Colab
 
-Required Colab Secrets:
+Use the dedicated \`URL_Uploader_Gofile_Colab.ipynb\` notebook. Add only \`BOT_TOKEN\` and \`OWNER_ID\` to Colab Secrets, enable notebook access, and run the cells in order.
 
-- `BOT_TOKEN`
-- `API_ID`
-- `API_HASH`
-- `OWNER_ID` — your numeric Telegram user ID
+## Features
 
-Enable notebook access for each secret. Never commit or share your secret values.
+- Search Javtiful by video code, such as \`STAR-765\`.
+- Browse results with Previous/Next buttons and thumbnails.
+- Download a selected video using the existing Javtiful media extractor.
+- Upload to GoFile without an account token (guest upload).
+- Show download/upload progress, transfer rate, and ETA when the source exposes enough information.
+- Restrict commands and callbacks to \`OWNER_ID\`.
+- Store search sessions in memory only; no database or persistent history.
 
-> **Note:** Google Colab runtimes are temporary and may disconnect. Colab is best suited for testing and temporary use, not always-on hosting.
+The Javtiful website may change its HTML or playback system. Search and extraction must be tested live in the running environment; no live site test is implied by source compilation alone.
