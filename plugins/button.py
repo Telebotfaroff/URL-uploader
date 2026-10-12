@@ -8,6 +8,7 @@ from datetime import datetime
 from pyrogram import enums
 from pyrogram.types import InputMediaPhoto
 from plugins.config import Config
+from plugins.download_manager import register_process, unregister_process, register_upload, unregister_upload
 from plugins.script import Translation
 from plugins.thumbnail import *
 from plugins.functions.display_progress import progress_for_pyrogram, humanbytes
@@ -145,8 +146,11 @@ async def youtube_dl_call_back(bot, update):
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-
-    stdout, stderr = await process.communicate()
+    register_process(update.from_user.id, process)
+    try:
+        stdout, stderr = await process.communicate()
+    finally:
+        unregister_process(update.from_user.id, process)
     e_response = stderr.decode().strip()
     t_response = stdout.decode().strip()
     logger.info(e_response)
@@ -211,8 +215,11 @@ async def youtube_dl_call_back(bot, update):
         caption=Translation.UPLOAD_START.format(custom_file_name)
     )
     start_time = time.time()
-    thumbnail = None 
-
+    thumbnail = None
+    upload_cancelled = False
+    register_upload(update.from_user.id)
+    upload_cancelled = False
+    register_upload(update.from_user.id)
 
     try:
         if tg_send_type == "audio":
@@ -227,7 +234,8 @@ async def youtube_dl_call_back(bot, update):
                 progress_args=(
                     Translation.UPLOAD_START,
                     update.message,
-                    start_time
+                    start_time,
+                    update.from_user.id,
                 )
             )
 
@@ -243,7 +251,8 @@ async def youtube_dl_call_back(bot, update):
                 progress_args=(
                     Translation.UPLOAD_START,
                     update.message,
-                    start_time
+                    start_time,
+                    update.from_user.id,
                 )
             )
 
@@ -258,7 +267,8 @@ async def youtube_dl_call_back(bot, update):
                     progress_args=(
                         Translation.UPLOAD_START,
                         update.message,
-                        start_time
+                        start_time,
+                        update.from_user.id,
                     )
                 )
             else:
@@ -276,18 +286,27 @@ async def youtube_dl_call_back(bot, update):
                     progress_args=(
                         Translation.UPLOAD_START,
                         update.message,
-                        start_time
+                        start_time,
+                        update.from_user.id,
                     )
                 )
 
         logger.info("✅ " + custom_file_name)
 
+    except asyncio.CancelledError:
+        upload_cancelled = True
+        logger.info("Upload cancelled by user %s", update.from_user.id)
+        try:
+            await update.message.edit_caption(caption="⛔ Upload cancelled.")
+        except Exception:
+            pass
     except Exception as e:
         logger.error(f"Upload failed: {e}")
         await update.message.edit_caption(
             caption=f"Upload Error: {e}"
         )
 
+    unregister_upload(update.from_user.id)
     end_two = datetime.now()
     time_taken_for_upload = (end_two - end_one).seconds
 
@@ -302,11 +321,12 @@ async def youtube_dl_call_back(bot, update):
         except Exception as e:
             logger.error(f"Error removing thumbnail: {e}")
 
-    await update.message.edit_caption(
-        caption=Translation.AFTER_SUCCESSFUL_UPLOAD_MSG_WITH_TS.format(
-            time_taken_for_download, time_taken_for_upload
+    if not upload_cancelled:
+        await update.message.edit_caption(
+            caption=Translation.AFTER_SUCCESSFUL_UPLOAD_MSG_WITH_TS.format(
+                time_taken_for_download, time_taken_for_upload
+            )
         )
-    )
 
     logger.info(f"✅ Downloaded in: {time_taken_for_download} seconds")
     logger.info(f"✅ Uploaded in: {time_taken_for_upload} seconds")

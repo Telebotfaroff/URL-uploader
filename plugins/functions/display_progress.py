@@ -1,79 +1,82 @@
-
+import asyncio
 import math
 import time
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+from plugins.download_manager import consume_cancel_request
+
+from pyrogram import enums
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
 from plugins.script import Translation
-from pyrogram import enums 
 
 
+async def progress_for_pyrogram(current, total, ud_type, message, start, user_id=None):
+    if user_id is not None and consume_cancel_request(user_id):
+        raise asyncio.CancelledError
+    now = time.monotonic()
+    elapsed = max(now - start, 0.001)
+    percentage = min(100.0, current * 100 / total) if total and total > 0 else 0.0
+    speed = current / elapsed if elapsed > 0 else 0.0
+    eta_ms = round(max(total - current, 0) / speed * 1000) if total and speed > 0 else 0
+    elapsed_text = TimeFormatter(round(elapsed * 1000))
+    eta_text = TimeFormatter(eta_ms) if eta_ms else "0 s"
 
-
-async def progress_for_pyrogram(current, total, ud_type, message, start):
-    now = time.time()
-    diff = now - start
-    if round(diff % 10.00) == 0 or current == total:
-        percentage = current * 100 / total
-        speed = current / diff
-        elapsed_time = round(diff) * 1000
-        time_to_completion = round((total - current) / speed) * 1000
-        estimated_total_time = elapsed_time + time_to_completion
-
-        elapsed_time = TimeFormatter(milliseconds=elapsed_time)
-        estimated_total_time = TimeFormatter(milliseconds=estimated_total_time)
-
-        progress = "┏━━━━✦[{0}{1}]✦━━━━".format(
-            ''.join(["▣" for i in range(math.floor(percentage / 10))]),
-            ''.join(["▢" for i in range(10 - math.floor(percentage / 10))])
+    progress = "┏━━━━✦[{0}{1}]✦━━━━".format(
+        "".join(["▣" for _ in range(min(10, math.floor(percentage / 10)))]),
+        "".join(["▢" for _ in range(max(0, 10 - math.floor(percentage / 10)))])
+    )
+    tmp = progress + Translation.PROGRESS.format(
+        round(percentage, 2),
+        humanbytes(current),
+        humanbytes(total),
+        humanbytes(speed),
+        eta_text,
+    )
+    try:
+        buttons = []
+        if user_id is not None:
+            buttons = [[InlineKeyboardButton(
+                "⛔ Cancel",
+                callback_data=f"cancel_download+{int(user_id)}",
+                style=enums.ButtonStyle.DANGER,
+            )]]
+        await message.edit(
+            text=Translation.PROGRES.format(ud_type, tmp),
+            parse_mode=enums.ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup(buttons) if buttons else None,
         )
-
-        tmp = progress + Translation.PROGRESS.format(
-            round(percentage, 2),
-            humanbytes(current),
-            humanbytes(total),
-            humanbytes(speed),
-            estimated_total_time if estimated_total_time != '' else "0 s"
-        )
-        try:
-            await message.edit(
-              text= Translation.PROGRES.format(
-              ud_type,
-              tmp
-                ),
-                parse_mode=enums.ParseMode.MARKDOWN,
-                reply_markup=InlineKeyboardMarkup(
-                    [
-                        [ 
-                        InlineKeyboardButton('⛔ Cancel', callback_data=f"cancel_download+{id}", style=enums.ButtonStyle.DANGER)
-                       ]
-                   ]
-                 )
-            )
-        except:
-            pass
+    except Exception:
+        # Telegram may reject rapid edits or an edit after the message changes.
+        pass
 
 
 def humanbytes(size):
-    # https://stackoverflow.com/a/49361727/4723940
-    # 2**10 = 1024
     if not size:
-        return ""
-    power = 2 ** 10
-    n = 0
-    Dic_powerN = {0: ' ', 1: 'K', 2: 'M', 3: 'G', 4: 'T'}
-    while size > power:
-        size /= power
-        n += 1
-    return str(round(size, 2)) + " " + Dic_powerN[n] + 'B'
+        return "0 B"
+    power = 1024
+    units = ("B", "KB", "MB", "GB", "TB", "PB")
+    value = float(size)
+    index = 0
+    while value >= power and index < len(units) - 1:
+        value /= power
+        index += 1
+    return f"{round(value, 2)} {units[index]}"
 
 
 def TimeFormatter(milliseconds: int) -> str:
-    seconds, milliseconds = divmod(int(milliseconds), 1000)
+    seconds, milliseconds = divmod(max(0, int(milliseconds)), 1000)
     minutes, seconds = divmod(seconds, 60)
     hours, minutes = divmod(minutes, 60)
     days, hours = divmod(hours, 24)
-    tmp = ((str(days) + "d, ") if days else "") + \
-          ((str(hours) + "h, ") if hours else "") + \
-          ((str(minutes) + "m, ") if minutes else "") + \
-          ((str(seconds) + "s, ") if seconds else "") + \
-          ((str(milliseconds) + "ms, ") if milliseconds else "")
-    return tmp[:-2]
+    parts = []
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    if seconds:
+        parts.append(f"{seconds}s")
+    if milliseconds and not parts:
+        parts.append(f"{milliseconds}ms")
+    return ", ".join(parts) or "0 s"

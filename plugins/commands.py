@@ -16,6 +16,7 @@ from plugins.database.database import db
 from pyrogram.errors import MessageNotModified
 from pyrogram import Client, filters, types, errors
 from plugins.settings.settings import OpenSettings
+from plugins.download_manager import cancel_process
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery, ForceReply, LinkPreviewOptions
 
 
@@ -79,42 +80,26 @@ async def add_caption_help(bot, update):
     )
 
 
-@Client.on_callback_query(filters.regex('^cancel_download\+'))
+@Client.on_callback_query(filters.regex(r"^cancel_download\+"))
 async def cancel_cb(c, m):
-    await m.answer()
-    await m.message.edit(text="Trying to Cancel")
-    id = m.data.split("+", 1)[1]
-    if id not in Config.DOWNLOAD_LOCATION:
-        await m.message.edit("This process already cancelled reason may be bot restarted")
+    raw_user_id = m.data.split("+", 1)[1]
+    if raw_user_id == "unknown":
+        await m.answer("This download cannot be cancelled from this progress message.", show_alert=True)
         return
-    Config.DOWNLOAD_LOCATION.remove(id)
-
-
-@Client.on_message(filters.private & filters.command("info", [".", "/"]))
-async def info_handler(bot, update):
-    if update.from_user.last_name:
-        last_name = update.from_user.last_name
+    try:
+        target_user_id = int(raw_user_id)
+    except ValueError:
+        await m.answer("Invalid cancellation request.", show_alert=True)
+        return
+    if target_user_id != m.from_user.id:
+        await m.answer("You can only cancel your own download.", show_alert=True)
+        return
+    if await cancel_process(target_user_id):
+        await m.answer("Download cancellation requested.")
+        await m.message.edit_text("⛔ Download cancellation requested.")
     else:
-        last_name = "None"
-    await update.reply_text(  
-        text=Translation.INFO_TEXT.format(update.from_user.first_name, last_name, update.from_user.username, update.from_user.id, update.from_user.mention, update.from_user.dc_id, update.from_user.language_code, update.from_user.status), 
-        reply_markup=Translation.BUTTONS,           
-        link_preview_options=LinkPreviewOptions(is_disabled=True)
-    )
+        await m.answer("No active download process was found.", show_alert=True)
+        await m.message.edit_text("No active download process was found. It may already be finished.")
 
-
-@Client.on_message(filters.private & filters.command("warn"))
-async def warn(c, m):
-    if m.from_user.id in Config.ADMIN:
-        if len(m.command) >= 3:
-            try:
-                user_id = m.text.split(' ', 2)[1]
-                reason = m.text.split(' ', 2)[2]
-                await m.reply_text("User Notfied Sucessfully")
-                await c.send_message(chat_id=int(user_id), text=reason)
-            except:
-                 await m.reply_text("User Not Notfied Sucessfully 😔")
-    else:
-        await m.reply_text(text="You Are Not Admin 😡", quote=True)
 
 

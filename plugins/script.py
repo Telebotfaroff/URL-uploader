@@ -25,7 +25,7 @@ as a file or video.
 • Reply to any media with `/caption` + your text to set a caption
 • `/vid <Javtiful video URL>` — inspect, choose quality, and upload a video
 • `/channel <Javtiful channel URL>` — inspect a channel and download its first page or batch
-• `/actress` — search feature is not implemented yet
+• `/actress <Javtiful actress URL>` — inspect an actress listing and download its first page or batch
 </blockquote>
 """
     

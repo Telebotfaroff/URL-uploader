@@ -7,6 +7,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
+from io import BytesIO
+from PIL import Image
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -99,9 +101,9 @@ def _download_thumbnail(url):
         content_type = response.headers.get("content-type", "")
         if not content_type.startswith("image/") or len(response.content) > 8 * 1024 * 1024:
             return None
-        suffix = ".jpg"
-        path = Path(Config.DOWNLOAD_LOCATION) / f"thumb_{int(time.time() * 1000)}{suffix}"
-        path.write_bytes(response.content)
+        path = Path(Config.DOWNLOAD_LOCATION) / f"thumb_{time.time_ns()}.jpg"
+        with Image.open(BytesIO(response.content)) as image:
+            image.convert("RGB").save(path, format="JPEG", quality=88, optimize=True)
         return str(path)
     except Exception:
         logger.debug("Unable to fetch video thumbnail", exc_info=True)
@@ -164,7 +166,7 @@ def _channel_keyboard():
     ])
 
 
-async def _process_channel(bot, message, state, all_pages=False):
+async def _process_channel(bot, message, state, user_id, all_pages=False):
     status = await message.reply_text("⏳ Starting channel download…")
     uploaded = failed = skipped = 0
     seen = set()
@@ -203,7 +205,7 @@ async def _process_channel(bot, message, state, all_pages=False):
     except Exception as exc:
         await _safe_edit(status, f"❌ Channel processing failed\n{type(exc).__name__}: {str(exc)[:700]}")
     finally:
-        pending.pop(message.from_user.id, None)
+        pending.pop(user_id, None)
 
 
 @Client.on_message(filters.private & filters.command(["vid"], ["/", "."]))
@@ -274,10 +276,38 @@ async def javtiful_channel_command(bot, message):
 
 
 @Client.on_message(filters.private & filters.command(["actress"], ["/", "."]))
-async def actress_placeholder(bot, message):
-    await message.reply_text(
-        "🚧 /actress is not implemented yet. JAVDL currently supports direct video URLs and channel URLs."
-    )
+async def actress_command(bot, message):
+    parts = message.command or []
+    if len(parts) < 2:
+        return await message.reply_text("Usage: /actress https://javtiful.com/actress/…")
+    url = parts[1].strip()
+    if not (_valid_url(url, "/actress/") or _valid_url(url, "/model/")):
+        return await message.reply_text("Please provide a valid Javtiful actress/model listing URL.")
+    status = await message.reply_text("🔎 Inspecting actress listing…")
+    try:
+        info = await asyncio.to_thread(channel_extractor.inspect, url)
+        total_pages = max(1, int(info.get("total_pages") or 1))
+        state = {
+            "type": "channel",
+            "url": url,
+            "channel_name": info.get("channel_name") or "Actress listing",
+            "total_pages": total_pages,
+            "total_videos": info.get("total_videos"),
+            "first_page": {"items": info.get("first_page_items") or []},
+        }
+        pending[message.from_user.id] = state
+        count = info.get("total_videos")
+        await status.edit_text(
+            f"🎭 {state['channel_name']}\n"
+            f"🎬 Videos: {count if count is not None else 'Unknown'}\n"
+            f"📄 Pages: {total_pages}\n"
+            f"📌 First-page entries: {len(state['first_page']['items'])}\n\n"
+            "Choose what to process:",
+            reply_markup=_channel_keyboard(),
+        )
+    except Exception as exc:
+        logger.exception("Javtiful actress listing inspection failed")
+        await status.edit_text(f"❌ Actress listing inspection failed\n{type(exc).__name__}: {str(exc)[:700]}")
 
 
 @Client.on_callback_query(filters.regex(r"^javdl\|"))
@@ -309,9 +339,12 @@ async def javdl_callback(bot, query):
 
     if action[1] in {"page", "all"}:
         if state.get("type") != "channel":
-            return await query.answer("This channel selection has expired.", show_alert=True)
-        await query.answer("Starting channel processing…")
-        await _process_channel(bot, query.message, state, all_pages=(action[1] == "all"))
+            return await query.answer("This listing selection has expired.", show_alert=True)
+        if state.get("processing"):
+            return await query.answer("This batch is already running.", show_alert=True)
+        state["processing"] = True
+        await query.answer("Starting listing processing…")
+        await _process_channel(bot, query.message, state, query.from_user.id, all_pages=(action[1] == "all"))
         return
 
     await query.answer("Unknown action.", show_alert=True)
