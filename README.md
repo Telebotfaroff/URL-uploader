@@ -9,6 +9,8 @@ A lightweight, personal-use Telegram bot that searches Javtiful by video code, l
 - Search Javtiful using full codes such as `HNTRZ-010` or prefixes such as `IPZZ`.
 - Browse matching results with thumbnails and Previous/Next buttons.
 - Download a selected result and upload it to GoFile without a GoFile account token.\n- Extract 5, 10, 15, or 20 evenly spaced screenshots from a selected video using the **SS** button.
+- Use **DL + SS** to upload the video to GoFile and generate screenshots in one job; choose the screenshot quantity when prompted.
+- Display the GoFile URL as visible, copyable text in the result message.
 - Show download/upload progress, transfer speed, and ETA when available.
 - Restrict bot commands and button callbacks to your Telegram user ID.
 - Keep search sessions in memory only; no database or persistent history.
@@ -31,7 +33,7 @@ No database, Neon, `API_ID`, `API_HASH`, or GoFile API token is required. FFmpeg
 3. Run **Setup** to install dependencies and clone this branch.
 4. Run **Check** to compile the source and execute the basic regression tests.
 5. Run **Start bot** and keep that cell running.
-6. Open your bot in Telegram and send a full video code such as `IPZZ-989` or a prefix such as `IPZZ`. Choose a result, then press **DL** to upload it to GoFile or **SS** to extract 5, 10, 15, or 20 screenshots.
+6. Open your bot in Telegram and send a full video code such as `IPZZ-989` or a prefix such as `IPZZ`. Choose a result, then press **DL** to upload it to GoFile, **SS** to extract 5, 10, 15, or 20 screenshots, or **DL + SS** to do both in one job. GoFile links are shown as visible, copyable text.
 
 ## Project files
 
