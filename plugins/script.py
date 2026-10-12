@@ -17,7 +17,7 @@ class Translation(object):
 
 <b>🎬 Javtiful Downloader</b>
 /vid &lt;video URL&gt; — Choose quality and upload one video
-/channel &lt;channel URL&gt; — Browse or batch-download channel videos
+/channel &lt;channel URL&gt; — Browse or batch-download one channel\n/channels — Process every saved data/ channel URL sequentially
 /actress &lt;actress URL&gt; — Browse or batch-download an actress listing
 /resume — Resume a saved channel/actress batch after a restart
 /setdump — View dump-channel setting (owner only)
@@ -52,7 +52,7 @@ Choose the upload format when prompted.
 
 <b>Javtiful Downloader</b>
 /vid &lt;video URL&gt; — Inspect a video, choose quality, then upload it
-/channel &lt;channel URL&gt; — Inspect a channel; download the first page or all available pages
+/channel &lt;channel URL&gt; — Inspect and download one channel\n/channels — Process all channel URLs saved in the GitHub data/ folder, one channel at a time
 /actress &lt;actress URL&gt; — Inspect an actress/model listing; download the first page or all available pages
 /resume — Restore the last saved batch after a Colab restart; completed uploads are skipped using history
 
