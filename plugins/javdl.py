@@ -179,7 +179,7 @@ def _download_thumbnail(url):
         return None
 
 
-async def _download_and_upload(bot, chat_id, url, quality, status, caption=None):
+async def _download_and_upload(bot, chat_id, url, quality, status, caption=None, download_semaphore=None, upload_semaphore=None):
     video = None
     thumb_path = None
     try:
@@ -191,7 +191,11 @@ async def _download_and_upload(bot, chat_id, url, quality, status, caption=None)
         loop = asyncio.get_running_loop()
         progress = _download_progress(status, loop, video.title or "Video")
         await status.edit_text(f"⬇️ Preparing download: {video.title or 'Video'}")
-        await asyncio.to_thread(downloader.download, video, quality, progress)
+        if download_semaphore is None:
+            await asyncio.to_thread(downloader.download, video, quality, progress)
+        else:
+            async with download_semaphore:
+                await asyncio.to_thread(downloader.download, video, quality, progress)
 
         thumb_path = await asyncio.to_thread(_download_thumbnail, video.thumbnail)
         upload_state = {"time": 0.0}
@@ -222,19 +226,26 @@ async def _download_and_upload(bot, chat_id, url, quality, status, caption=None)
             send_kwargs["duration"] = duration
         if thumb_path:
             send_kwargs["thumb"] = thumb_path
-        try:
-            await bot.send_video(**send_kwargs)
-            destination_note = "\n📦 Destination: dump channel" if dump_chat_id is not None else ""
-        except Exception:
-            if dump_chat_id is None:
-                raise
-            logger.exception("Upload to dump channel failed; falling back to user chat")
-            await status.edit_text("⚠️ Dump-channel upload failed. Retrying in your chat…")
-            send_kwargs["chat_id"] = chat_id
-            upload_state["time"] = 0.0
-            upload_state["started"] = time.monotonic()
-            await bot.send_video(**send_kwargs)
-            destination_note = "\n↩️ Destination: your chat (fallback)"
+        async def _send_with_fallback():
+            try:
+                await bot.send_video(**send_kwargs)
+                return "\n📦 Destination: dump channel" if dump_chat_id is not None else ""
+            except Exception:
+                if dump_chat_id is None:
+                    raise
+                logger.exception("Upload to dump channel failed; falling back to user chat")
+                await status.edit_text("⚠️ Dump-channel upload failed. Retrying in your chat…")
+                send_kwargs["chat_id"] = chat_id
+                upload_state["time"] = 0.0
+                upload_state["started"] = time.monotonic()
+                await bot.send_video(**send_kwargs)
+                return "\n↩️ Destination: your chat (fallback)"
+
+        if upload_semaphore is None:
+            destination_note = await _send_with_fallback()
+        else:
+            async with upload_semaphore:
+                destination_note = await _send_with_fallback()
         await status.edit_text(
             f"✅ Uploaded successfully\n\n🎬 {title}\n"
             f"🎚 Quality: {video.selected_quality or quality}{destination_note}"
