@@ -26,7 +26,7 @@ No database, Neon, `API_ID`, `API_HASH`, or GoFile API token is required. FFmpeg
 
 ## Run in Google Colab
 
-1. Open the [Open the GoFile Colab notebook](https://colab.research.google.com/github/Telebotfaroff/URL-uploader/blob/gofile/URL_Uploader_Gofile_Colab.ipynb).
+1. Open the [GoFile Colab notebook](https://colab.research.google.com/github/Telebotfaroff/URL-uploader/blob/gofile/URL_Uploader_Gofile_Colab.ipynb).
 2. Run **Setup** and paste your bot token when prompted (the input is hidden). The owner ID `7367490186` is preset in the code.
 3. Run **Setup** to install dependencies and clone this branch.
 4. Run **Check** to compile the source and execute the basic regression tests.
