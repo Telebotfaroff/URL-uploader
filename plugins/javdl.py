@@ -29,6 +29,7 @@ downloader = Downloader(workdir=Config.DOWNLOAD_LOCATION)
 # Per-user interaction state for inline quality/channel choices.
 pending = {}
 active_saved_batches = set()
+active_batch_users = set()
 MAX_CHANNEL_PAGES = 50
 MAX_BATCH_VIDEOS = 200
 PARALLEL_SPEED_PROFILES = {"safe": (1, 1), "balanced": (2, 2), "fast": (3, 3)}
@@ -232,7 +233,7 @@ def _format_active_transfer(item):
         details = f"  {bar} {percent:3d}%  •  {size}  •  {speed / (1024 * 1024):.1f} MB/s  •  ETA {eta}"
     else:
         details = "  Preparing transfer..."
-    return f"• {title}\\n{details}"
+    return f"• {title}\n{details}"
 
 
 async def _dashboard_refresh(status, force=False):
@@ -337,6 +338,22 @@ async def _upload_progress(current, total, message, title, state):
             f"📤 UPLOADING TO TELEGRAM\n🎬 {title[:180]}\n{_progress_details(current, total, state)}",
             force=(total > 0 and current >= total),
         )
+
+
+def _is_retryable_batch_error(exc):
+    """Retry only failures known to occur before Telegram accepts an upload."""
+    if isinstance(exc, requests.RequestException):
+        return True
+    if isinstance(exc, subprocess.TimeoutExpired):
+        return True
+    if isinstance(exc, RuntimeError):
+        message = str(exc).lower()
+        return (
+            message.startswith("http download failed after ")
+            or message.startswith("ffmpeg hls download failed")
+            or message.startswith("ffmpeg hls download timed out")
+        )
+    return False
 
 
 def _video_duration_seconds(path, fallback=None):
@@ -449,12 +466,23 @@ async def _download_and_upload(bot, chat_id, url, quality, status, caption=None,
             try:
                 await upload_client.send_video(**send_kwargs)
                 return "\n📦 Destination: dump channel" if dump_chat_id is not None else ""
-            except Exception:
-                if dump_chat_id is None:
+            except Exception as exc:
+                # Only fall back for errors that clearly indicate the bot cannot
+                # post to the configured destination. Network/upload errors can
+                # be ambiguous: retrying them elsewhere may create duplicates.
+                destination_errors = {
+                    "ChatAdminRequired", "ChatWriteForbidden", "PeerIdInvalid",
+                    "ChannelInvalid", "ChannelPrivate", "UserNotParticipant",
+                    "ChatIdInvalid",
+                }
+                if dump_chat_id is None or exc.__class__.__name__ not in destination_errors:
                     raise
-                logger.exception("Upload to dump channel failed; falling back to user chat")
+                logger.warning(
+                    "Dump channel rejected the upload (%s); falling back to user chat",
+                    exc.__class__.__name__,
+                )
                 if _dashboard_key(status) not in _BATCH_DASHBOARDS:
-                    await _safe_edit(status, "⚠️ Dump-channel upload failed. Retrying in your chat…")
+                    await _safe_edit(status, "⚠️ Dump channel unavailable for posting. Sending to your chat…")
                 send_kwargs["chat_id"] = chat_id
                 upload_state["time"] = 0.0
                 upload_state["started"] = time.monotonic()
@@ -509,7 +537,10 @@ def _channel_keyboard(skip_uploaded=True, speed=DEFAULT_PARALLEL_SPEED):
 
 
 async def _process_channel(bot, message, state, user_id, all_pages=False, selected_page=None):
-    status = await message.reply_text("⏳ Preparing channel download queue…")
+    if user_id in active_batch_users:
+        return await message.reply_text("⏳ A batch is already running. Let it finish before starting another.")
+    active_batch_users.add(user_id)
+    status = None
     uploaded = failed = skipped = already_uploaded = 0
     seen = set()
     skip_uploaded = bool(state.get("skip_uploaded", True))
@@ -524,6 +555,7 @@ async def _process_channel(bot, message, state, user_id, all_pages=False, select
     pipeline_slots = asyncio.Semaphore(upload_limit * 2)
     worker_count = download_limit + upload_limit
     try:
+        status = await message.reply_text("⏳ Preparing channel download queue…")
         total_pages = max(1, min(int(state.get("total_pages") or 1), MAX_CHANNEL_PAGES))
         if selected_page is not None:
             if not 1 <= int(selected_page) <= total_pages:
@@ -613,9 +645,13 @@ async def _process_channel(bot, message, state, user_id, all_pages=False, select
                                 upload_semaphore=upload_semaphore,
                             )
                             break
-                        except Exception:
-                            if attempt >= 3:
+                        except Exception as exc:
+                            if attempt >= 3 or not _is_retryable_batch_error(exc):
                                 raise
+                            logger.warning(
+                                "Retrying transient pre-upload failure %s (attempt %s/3) for %s",
+                                type(exc).__name__, attempt, url,
+                            )
                             if _dashboard_key(status) not in _BATCH_DASHBOARDS:
                                 await _safe_edit(status, f"🔁 RETRY {attempt}/2\n🎬 {title[:180]}")
                             await asyncio.sleep(attempt * 2)
@@ -630,7 +666,7 @@ async def _process_channel(bot, message, state, user_id, all_pages=False, select
                         dashboard["failed"] = failed
                         await _dashboard_refresh(status, force=True)
                     else:
-                        await _safe_edit(status, f"✅ VIDEO COMPLETE\\n🎬 {uploaded_title or title}\\n\\n📊 {uploaded}/{len(jobs)} processed  •  ⏭️ {skipped} skipped  •  ❌ {failed} failed")
+                        await _safe_edit(status, f"✅ VIDEO COMPLETE\n🎬 {uploaded_title or title}\n\n📊 {uploaded}/{len(jobs)} processed  •  ⏭️ {skipped} skipped  •  ❌ {failed} failed")
                 except Exception as exc:
                     failed += 1
                     logger.exception("Channel video failed: %s", url)
@@ -640,7 +676,7 @@ async def _process_channel(bot, message, state, user_id, all_pages=False, select
                         dashboard["failed"] = failed
                         await _dashboard_refresh(status, force=True)
                     else:
-                        await _safe_edit(status, f"⚠️ VIDEO FAILED\\n🎬 {title[:180]}\\n{type(exc).__name__}: {str(exc)[:300]}\\n\\n📊 {uploaded}/{len(jobs)} processed  •  ⏭️ {skipped} skipped  •  ❌ {failed} failed")
+                        await _safe_edit(status, f"⚠️ VIDEO FAILED\n🎬 {title[:180]}\n{type(exc).__name__}: {str(exc)[:300]}\n\n📊 {uploaded}/{len(jobs)} processed  •  ⏭️ {skipped} skipped  •  ❌ {failed} failed")
                 finally:
                     pipeline_slots.release()
                     queue.task_done()
@@ -659,10 +695,15 @@ async def _process_channel(bot, message, state, user_id, all_pages=False, select
             except Exception:
                 logger.exception("Could not clear completed batch checkpoint")
     except Exception as exc:
-        await _safe_edit(status, f"❌ Channel processing failed\n{type(exc).__name__}: {str(exc)[:700]}")
+        logger.exception("Channel batch failed for user %s", user_id)
+        if status is not None:
+            await _safe_edit(status, f"❌ Channel processing failed\n{type(exc).__name__}: {str(exc)[:700]}")
     finally:
-        _BATCH_DASHBOARDS.pop(_dashboard_key(status), None)
-        pending.pop(user_id, None)
+        if status is not None:
+            _BATCH_DASHBOARDS.pop(_dashboard_key(status), None)
+        active_batch_users.discard(user_id)
+        if pending.get(user_id) is state:
+            pending.pop(user_id, None)
 
 
 @Client.on_message(filters.private & filters.command(["channels"], ["/", "."]))
@@ -671,6 +712,8 @@ async def saved_channels_command(bot, message):
     if not message.from_user:
         return
     user_id = message.from_user.id
+    if user_id in active_batch_users:
+        return await message.reply_text("⏳ A channel/actress batch is already running.")
     if user_id in active_saved_batches:
         return await message.reply_text("⏳ Your saved-channel batch is already running.")
     active_saved_batches.add(user_id)
@@ -684,7 +727,7 @@ async def saved_channels_command(bot, message):
             logger.exception("Could not load saved channel URLs from GitHub")
             return await _safe_edit(
                 status,
-                f"❌ Could not read the data/ folder from GitHub.\\n{type(exc).__name__}: {str(exc)[:500]}",
+                f"❌ Could not read the data/ folder from GitHub.\n{type(exc).__name__}: {str(exc)[:500]}",
             )
         if not urls:
             return await _safe_edit(
@@ -693,7 +736,7 @@ async def saved_channels_command(bot, message):
             )
         await _safe_edit(
             status,
-            f"📚 Found {len(urls)} saved channel URL(s).\\n"
+            f"📚 Found {len(urls)} saved channel URL(s).\n"
             "🔒 Processing strictly one channel at a time; each channel will finish before the next starts.",
         )
         for index, url in enumerate(urls, start=1):
@@ -732,7 +775,7 @@ async def saved_channels_command(bot, message):
             "Only one channel was processed at a time. Re-run /channels to retry; upload history will skip videos already uploaded."
         )
         if errors:
-            summary += "\\n\\nFailed to inspect:\\n" + "\\n".join(
+            summary += "\n\nFailed to inspect:\n" + "\n".join(
                 f"• {url}" for url, _ in errors[:8]
             )
         await _safe_edit(status, summary)
@@ -745,6 +788,8 @@ async def resume_batch_command(bot, message):
     if not message.from_user:
         return
     user_id = message.from_user.id
+    if user_id in active_batch_users or user_id in active_saved_batches:
+        return await message.reply_text("⏳ Another batch is already running. Please wait for it to finish.")
     try:
         saved = await db.get_setting(f"batch_resume_{user_id}")
         data = json.loads(saved) if saved else None
@@ -844,6 +889,8 @@ async def set_dump_command(bot, message):
 
 @Client.on_message(filters.private & filters.command(["vid"], ["/", "."]))
 async def vid_command(bot, message):
+    if message.from_user and (message.from_user.id in active_batch_users or message.from_user.id in active_saved_batches):
+        return await message.reply_text("⏳ A batch is running. Wait until it finishes before starting a single-video download.")
     parts = message.command or []
     if len(parts) < 2:
         return await message.reply_text("Usage: /vid https://javtiful.com/video/…")
@@ -873,6 +920,8 @@ async def vid_command(bot, message):
 
 @Client.on_message(filters.private & filters.command(["channel"], ["/", "."]))
 async def javtiful_channel_command(bot, message):
+    if message.from_user and (message.from_user.id in active_batch_users or message.from_user.id in active_saved_batches):
+        return await message.reply_text("⏳ A batch is already running. Wait until it finishes before opening another listing.")
     parts = message.command or []
     if len(parts) < 2:
         return await message.reply_text(
@@ -914,6 +963,8 @@ async def javtiful_channel_command(bot, message):
 
 @Client.on_message(filters.private & filters.command(["actress"], ["/", "."]))
 async def actress_command(bot, message):
+    if message.from_user and (message.from_user.id in active_batch_users or message.from_user.id in active_saved_batches):
+        return await message.reply_text("⏳ A batch is already running. Wait until it finishes before opening another listing.")
     parts = message.command or []
     if len(parts) < 2:
         return await message.reply_text("Usage: /actress https://javtiful.com/actress/…")
