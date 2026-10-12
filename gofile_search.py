@@ -18,6 +18,33 @@ def _clean(value):
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
+def _english_title(title, fallback="Video"):
+    """Translate CJK titles to English; never expose the original non-English title."""
+    title = _clean(title)
+    if not title:
+        return fallback
+    if not re.search(r"[\\u3040-\\u30ff\\u3400-\\u4dbf\\u4e00-\\u9fff\\uac00-\\ud7af]", title):
+        return title
+    try:
+        response = requests.get(
+            "https://translate.googleapis.com/translate_a/single",
+            params={"client": "gtx", "sl": "auto", "tl": "en", "dt": "t", "q": title},
+            headers={"User-Agent": HEADERS["User-Agent"]},
+            timeout=6,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        translated = _clean("".join(part[0] for part in payload[0] if part and part[0]))
+        if translated and not re.search(
+            r"[\\u3040-\\u30ff\\u3400-\\u4dbf\\u4e00-\\u9fff\\uac00-\\ud7af]",
+            translated,
+        ):
+            return translated[:500]
+    except (requests.RequestException, ValueError, TypeError, IndexError, KeyError):
+        pass
+    return fallback
+
+
 def _page_url(code, page):
     # Javtiful's search route is /search; page 1 omits the page parameter.
     query = {"page": str(page), "q": code} if page > 1 else {"q": code}
@@ -80,6 +107,7 @@ def _parse_page(html, page_url):
             thumbnail = meta.get("content") if meta else None
         match = CODE_RE.search(title) or CODE_RE.search(parsed.path)
         code = re.sub(r"[-_ ]+", "-", match.group(0)).upper() if match else None
+        title = _english_title(title, code or "English title unavailable")
         results.append({
             "title": title[:500],
             "url": canonical,
