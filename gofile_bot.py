@@ -99,7 +99,6 @@ def _keyboard(search_id, index, count):
         InlineKeyboardButton("📥 DL", callback_data=f"d:{search_id}:{index}"),
         InlineKeyboardButton("📸 SS", callback_data=f"ss:{search_id}:{index}"),
     ])
-    rows.append([InlineKeyboardButton("🔎 Open on Javtiful", url=SEARCHES[search_id]["items"][index]["url"])])
     return InlineKeyboardMarkup(rows)
 
 
