@@ -10,8 +10,8 @@ A lightweight, personal-use Telegram bot that searches Javtiful by video code, l
 - Browse matching results with thumbnails and Previous/Next buttons.
 - Download a selected result and upload it to GoFile without a GoFile account token.
 - Extract 5, 10, 15, or 20 evenly spaced screenshots from a selected video using the **SS** button.
-- Use **DL + SS** to upload the video to GoFile and generate screenshots in one job; choose the screenshot quantity when prompted.
-- Bulk mode: send up to 20 video codes separated by new lines, commas, or semicolons, then choose **Download all**, **Screenshots all**, or **Download + Screenshots all**. Screenshot actions ask for 5, 10, 15, or 20 screenshots per video. Bulk jobs run sequentially and report successes/failures.
+- For **SS**, **DL + SS**, and bulk screenshot jobs, choose whether screenshots go to the current chat or private Telegram channel `-1003963567446`.
+- Bulk mode: send up to 20 video codes separated by new lines, commas, or semicolons, then choose **Download all**, **Screenshots all**, or **Download + Screenshots all**. Screenshot actions let you choose quantity and destination. Bulk jobs run sequentially and report successes/failures.
 - Display the GoFile URL as visible, copyable text in the result message.
 - Show download/upload progress, transfer speed, and ETA when available.
 - Restrict bot commands and button callbacks to your Telegram user ID.
@@ -26,7 +26,7 @@ You need your Telegram bot token, entered directly in the Colab Setup cell:
 | `BOT_TOKEN` | Entered at runtime in the Setup cell; input is hidden and it is not stored in the notebook source. |
 | `OWNER_ID` | Optional override; defaults to `7367490186` in `gofile_bot.py`. |
 
-No database, Neon, `API_ID`, `API_HASH`, or GoFile API token is required. FFmpeg is installed by the Colab notebook to support HLS streams.
+No database, Neon, `API_ID`, `API_HASH`, or GoFile API token is required. FFmpeg is installed by the Colab notebook to support HLS streams. Add the bot to private channel `-1003963567446` with permission to post messages before choosing the private-channel destination.
 
 ## Run in Google Colab
 
@@ -35,8 +35,9 @@ No database, Neon, `API_ID`, `API_HASH`, or GoFile API token is required. FFmpeg
 3. Run **Setup** to install dependencies and clone this branch.
 4. Run **Check** to compile the source and execute the basic regression tests.
 5. Run **Start bot** and keep that cell running.
-6. Open your bot in Telegram and send a full video code such as `IPZZ-989` or a prefix such as `IPZZ`. Choose a result, then press **DL** to upload it to GoFile, **SS** to extract 5, 10, 15, or 20 screenshots, or **DL + SS** to do both in one job. GoFile links are shown as visible, copyable text.
-7. For bulk mode, send multiple full codes separated by new lines, commas, or semicolons (maximum 20). The bot searches them and displays three actions: **Download all**, **Screenshots all**, and **Download + Screenshots all**. Jobs run one video at a time.
+7. Add the bot to private channel `-1003963567446` and grant it permission to post messages if you want channel delivery.
+8. Open your bot in Telegram and send a full video code such as `IPZZ-989` or a prefix such as `IPZZ`. Choose a result, then press **DL** to upload to GoFile, **SS** to extract screenshots, or **DL + SS** to do both. Screenshot quantity buttons let you choose **here** or **private channel**.
+9. For bulk mode, send multiple full codes separated by new lines, commas, or semicolons (maximum 20). Choose **Download all**, **Screenshots all**, or **Download + Screenshots all**, then select quantity and destination. Jobs run one video at a time.
 
 ## Project files
 
