@@ -17,6 +17,7 @@ from telegram.ext import (
 from gofile_media import download_video, extract_screenshots
 from gofile_search import search_videos
 from gofile_uploader import upload_guest
+from gofile_image_host import upload_images
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,6 +37,7 @@ MAX_SEARCHES_PER_OWNER = 10
 SEARCHES = {}
 ACTIVE_DOWNLOADS = set()
 DOWNLOAD_DIR = os.environ.get("DOWNLOAD_LOCATION", "./gofile_downloads")
+FREEIMAGE_API_KEY = os.environ.get("FREEIMAGE_API_KEY", "").strip()
 
 
 def is_owner(update):
@@ -129,6 +131,43 @@ def _combined_quantity_keyboard(search_id, index):
             InlineKeyboardButton("20 screenshots", callback_data=f"bc:{search_id}:{index}:20"),
         ],
     ])
+
+
+
+def _gallery_text(code, links):
+    safe_code = html.escape(str(code or "Unknown"))
+    lines = [
+        f"🖼️ <b>Screenshot Gallery — {safe_code}</b>",
+        f"Uploaded {len(links)} image(s) to Freeimage.host:",
+        "",
+    ]
+    for index, item in enumerate(links, 1):
+        viewer = html.escape(item.get("viewer_url") or item.get("url") or "", quote=True)
+        direct = html.escape(item.get("url") or "", quote=True)
+        lines.append(f'{index}. <a href="{viewer}">Open image {index}</a>')
+        lines.append(f'<code>{direct}</code>')
+    return "\n".join(lines)
+
+
+async def _upload_screenshot_gallery(status, screenshots):
+    if not FREEIMAGE_API_KEY:
+        return None, "FREEIMAGE_API_KEY is not configured"
+    state = {"started": time.monotonic(), "last_edit": 0.0}
+    loop = asyncio.get_running_loop()
+
+    def progress(done, total):
+        asyncio.run_coroutine_threadsafe(
+            _update_transfer(
+                status, f"☁️ UPLOADING SCREENSHOTS TO FREEIMAGE.HOST ({done}/{total})",
+                done, total, state, force=(done >= total),
+            ),
+            loop,
+        )
+
+    links = await asyncio.to_thread(
+        upload_images, screenshots, FREEIMAGE_API_KEY, progress
+    )
+    return links, None
 
 
 def _caption(item, index, count):
@@ -379,8 +418,15 @@ async def screenshot_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             extract_screenshots, str(path), temp_dir, count, video.duration
         )
 
-        # Put the video code in every screenshot caption, including each album.
         video_code = html.escape(item.get("code") or "Unknown")
+        gallery_links = None
+        gallery_error = None
+        try:
+            gallery_links, gallery_error = await _upload_screenshot_gallery(status, screenshots)
+        except Exception as exc:
+            LOGGER.warning("Freeimage.host screenshot upload failed: %s", type(exc).__name__)
+            gallery_error = "Freeimage.host upload failed; screenshots are still available in Telegram"
+
         # Telegram albums accept at most 10 photos per message group.
         for start in range(0, len(screenshots), 10):
             batch = screenshots[start:start + 10]
@@ -399,6 +445,17 @@ async def screenshot_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 for handle in opened_files:
                     handle.close()
 
+        if gallery_links:
+            await query.message.reply_text(
+                _gallery_text(item.get("code"), gallery_links),
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        elif gallery_error:
+            await query.message.reply_text(
+                f"ℹ️ Screenshot hosting note: {html.escape(gallery_error)}. "
+                "Screenshots were sent in Telegram."
+            )
         await status.delete()
     except Exception as exc:
         LOGGER.exception("Screenshot extraction failed")
@@ -510,6 +567,13 @@ async def combined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         screenshots = await asyncio.to_thread(
             extract_screenshots, str(path), temp_dir, count, video.duration
         )
+        gallery_links = None
+        gallery_error = None
+        try:
+            gallery_links, gallery_error = await _upload_screenshot_gallery(status, screenshots)
+        except Exception as exc:
+            LOGGER.warning("Freeimage.host screenshot upload failed: %s", type(exc).__name__)
+            gallery_error = "Freeimage.host upload failed; screenshots are still available in Telegram"
 
         title = html.escape(item.get("title") or video.title or "Video")
         code = html.escape(item.get("code") or "Unknown")
@@ -541,6 +605,17 @@ async def combined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             finally:
                 for handle in opened_files:
                     handle.close()
+        if gallery_links:
+            await query.message.reply_text(
+                _gallery_text(item.get("code"), gallery_links),
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        elif gallery_error:
+            await query.message.reply_text(
+                f"ℹ️ Screenshot hosting note: {html.escape(gallery_error)}. "
+                "Screenshots were sent in Telegram."
+            )
         await status.delete()
     except Exception as exc:
         LOGGER.exception("Combined download/upload/screenshot job failed")
