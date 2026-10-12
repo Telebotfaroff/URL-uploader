@@ -6,7 +6,7 @@ A lightweight, personal-use Telegram bot that searches Javtiful by video code, l
 
 ## Features
 
-- Search Javtiful using codes such as `HNTRZ-010`.
+- Search Javtiful using full codes such as `HNTRZ-010` or prefixes such as `IPZZ`.
 - Browse matching results with thumbnails and Previous/Next buttons.
 - Download a selected result and upload it to GoFile without a GoFile account token.
 - Show download/upload progress, transfer speed, and ETA when available.
@@ -26,12 +26,12 @@ No database, Neon, `API_ID`, `API_HASH`, or GoFile API token is required. FFmpeg
 
 ## Run in Google Colab
 
-1. Open the [GoFile Colab notebook](https://colab.research.google.com/github/Telebotfaroff/URL-uploader/blob/gofile/URL_Uploader_Gofile_Colab.ipynb).
+1. Open the [Open the GoFile Colab notebook](https://colab.research.google.com/github/Telebotfaroff/URL-uploader/blob/gofile/URL_Uploader_Gofile_Colab.ipynb).
 2. Run **Setup** and paste your bot token when prompted (the input is hidden). The owner ID `7367490186` is preset in the code.
 3. Run **Setup** to install dependencies and clone this branch.
 4. Run **Check** to compile the source and execute the basic regression tests.
 5. Run **Start bot** and keep that cell running.
-6. Open your bot in Telegram and send a video code, for example `HNTRZ-010`. Choose a result, then press Download.
+6. Open your bot in Telegram and send a full video code such as `IPZZ-989` or a prefix such as `IPZZ`. Choose a result, then press Download.
 
 ## Project files
 
