@@ -41,7 +41,7 @@ def upload_images(image_paths, api_key=None, progress_callback=None):
                     payload.get("status_code") not in (None, 200)
                     or success.get("code") not in (None, 200)
                 ):
-                    message = success.get("message") or payload.get("status_txt") or "unknown API response"
+                    message = (success.get("message") or payload.get("error", {}).get("message") or payload.get("status_txt") or f"unexpected response (status_code={payload.get('status_code')!r}, success_code={success.get('code')!r})")
                     raise RuntimeError(f"Freeimage.host rejected {path.name}: {message}")
                 uploaded.append({
                     "url": image["url"],
@@ -50,6 +50,9 @@ def upload_images(image_paths, api_key=None, progress_callback=None):
                 })
                 last_error = None
                 break
+            except RuntimeError:
+                # API-declared errors (such as an invalid API key) will not improve by retrying.
+                raise
             except (requests.RequestException, ValueError) as exc:
                 last_error = exc
                 if attempt == 0:
