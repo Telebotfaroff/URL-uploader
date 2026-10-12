@@ -14,7 +14,7 @@ class GofileSearchTests(unittest.TestCase):
           </div>
         </body></html>
         """
-        items, max_page = _parse_page(html, "https://javtiful.com/zh/search?q=STAR-765")
+        items, max_page = _parse_page(html, "https://javtiful.com/search?q=STAR-765")
         self.assertEqual(max_page, 1)
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["code"], "STAR-765")
@@ -23,7 +23,7 @@ class GofileSearchTests(unittest.TestCase):
 
     def test_parse_pagination(self):
         html = '<a href="?q=STAR-765&page=3">3</a>'
-        _, max_page = _parse_page(html, "https://javtiful.com/zh/search?q=STAR-765")
+        _, max_page = _parse_page(html, "https://javtiful.com/search?q=STAR-765")
         self.assertEqual(max_page, 3)
 
     def test_safe_filename(self):
