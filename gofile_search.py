@@ -12,6 +12,7 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9,ja;q=0.8",
 }
 CODE_RE = re.compile(r"\b[A-Z]{2,10}[-_ ]?\d{2,8}(?:[-_][A-Z0-9]{1,8})?\b", re.I)
+SEARCH_QUERY_RE = re.compile(r"[A-Z]{2,10}(?:[-_ ]?\d{2,8}(?:[-_][A-Z0-9]{1,8})?)?", re.I)
 
 
 def _clean(value):
@@ -137,8 +138,8 @@ def _parse_page(html, page_url):
 
 def search_videos(code, max_pages=5, max_results=50):
     code = _clean(code).upper()
-    if not code or not CODE_RE.fullmatch(code):
-        raise ValueError("Send a valid video code, for example STAR-765.")
+    if not code or not SEARCH_QUERY_RE.fullmatch(code):
+        raise ValueError("Send a video code such as STAR-765 or a code prefix such as IPZZ.")
     session = requests.Session()
     session.headers.update(HEADERS)
     all_results = []
