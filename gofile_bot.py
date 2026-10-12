@@ -99,6 +99,9 @@ def _keyboard(search_id, index, count):
         InlineKeyboardButton("📥 DL", callback_data=f"d:{search_id}:{index}"),
         InlineKeyboardButton("📸 SS", callback_data=f"ss:{search_id}:{index}"),
     ])
+    rows.append([
+        InlineKeyboardButton("📥 DL + 📸 SS", callback_data=f"both:{search_id}:{index}"),
+    ])
     return InlineKeyboardMarkup(rows)
 
 
@@ -111,6 +114,19 @@ def _screenshot_quantity_keyboard(search_id, index):
         [
             InlineKeyboardButton("15 screenshots", callback_data=f"sc:{search_id}:{index}:15"),
             InlineKeyboardButton("20 screenshots", callback_data=f"sc:{search_id}:{index}:20"),
+        ],
+    ])
+
+
+def _combined_quantity_keyboard(search_id, index):
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("5 screenshots", callback_data=f"bc:{search_id}:{index}:5"),
+            InlineKeyboardButton("10 screenshots", callback_data=f"bc:{search_id}:{index}:10"),
+        ],
+        [
+            InlineKeyboardButton("15 screenshots", callback_data=f"bc:{search_id}:{index}:15"),
+            InlineKeyboardButton("20 screenshots", callback_data=f"bc:{search_id}:{index}:20"),
         ],
     ])
 
@@ -401,6 +417,148 @@ async def screenshot_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+async def combined_quantity_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not is_owner(update):
+        await query.answer("Owner only.", show_alert=True)
+        return
+    try:
+        _, search_id, raw_index = query.data.split(":")
+        index = int(raw_index)
+        session = SEARCHES[search_id]
+        if session["owner_id"] != OWNER_ID:
+            raise KeyError(search_id)
+        item = session["items"][index]
+    except (ValueError, KeyError, IndexError):
+        await query.answer("This search has expired. Search again.", show_alert=True)
+        return
+    await query.answer()
+    title = html.escape(item.get("title") or item.get("code") or "Video")
+    await query.message.reply_text(
+        f"📥📸 <b>{title}</b>\\nChoose screenshot quantity. I'll upload the video to GoFile and send screenshots too:",
+        parse_mode="HTML",
+        reply_markup=_combined_quantity_keyboard(search_id, index),
+    )
+
+
+async def combined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not is_owner(update):
+        await query.answer("Owner only.", show_alert=True)
+        return
+    try:
+        _, search_id, raw_index, raw_count = query.data.split(":")
+        index = int(raw_index)
+        count = int(raw_count)
+        session = SEARCHES[search_id]
+        if session["owner_id"] != OWNER_ID:
+            raise KeyError(search_id)
+        item = session["items"][index]
+        if count not in (5, 10, 15, 20):
+            raise ValueError("Invalid screenshot quantity")
+    except (ValueError, KeyError, IndexError):
+        await query.answer("This selection has expired or is invalid.", show_alert=True)
+        return
+
+    job_key = (OWNER_ID, item["url"])
+    if job_key in ACTIVE_DOWNLOADS:
+        await query.answer("This video is already processing.", show_alert=True)
+        return
+    ACTIVE_DOWNLOADS.add(job_key)
+    await query.answer("Downloading, uploading, and generating screenshots…")
+    status = await query.message.reply_text(
+        f"📥📸 Starting GoFile upload and extracting {count} screenshots…"
+    )
+    temp_dir = tempfile.mkdtemp(prefix="gofile_combined_")
+    path = None
+    try:
+        loop = asyncio.get_running_loop()
+        download_state = {"started": time.monotonic(), "last_edit": 0.0}
+
+        def download_progress(current, total, mode="bytes"):
+            asyncio.run_coroutine_threadsafe(
+                _update_transfer(
+                    status, "⬇️ DOWNLOADING VIDEO", current, total,
+                    download_state, mode=mode,
+                ),
+                loop,
+            )
+
+        video, path, quality = await asyncio.to_thread(
+            download_video, item["url"], temp_dir, download_progress
+        )
+        await _update_transfer(
+            status, "⬇️ Download complete", path.stat().st_size,
+            path.stat().st_size, download_state, force=True,
+        )
+
+        upload_state = {"started": time.monotonic(), "last_edit": 0.0}
+
+        def upload_progress(current, total):
+            asyncio.run_coroutine_threadsafe(
+                _update_transfer(
+                    status, "☁️ UPLOADING TO GOFILE", current, total, upload_state
+                ),
+                loop,
+            )
+
+        link = await asyncio.to_thread(upload_guest, str(path), upload_progress)
+        await _update_transfer(
+            status, "📸 Extracting screenshots", 0, 0,
+            {"started": time.monotonic(), "last_edit": 0.0}, force=True,
+        )
+        screenshots = await asyncio.to_thread(
+            extract_screenshots, str(path), temp_dir, count, video.duration
+        )
+
+        title = html.escape(item.get("title") or video.title or "Video")
+        code = html.escape(item.get("code") or "Unknown")
+        caption = (
+            f"<b>{title}</b>\\n🎞 Code: <code>{code}</code>\\n"
+            f"📦 Quality: {html.escape(str(quality))}\\n"
+            f"🔗 <a href=\\"{html.escape(link, quote=True)}\\">Open GoFile download</a>"
+        )
+        thumb = video.thumbnail or item.get("thumbnail")
+        try:
+            if thumb:
+                await query.message.reply_photo(photo=thumb, caption=caption, parse_mode="HTML")
+            else:
+                await query.message.reply_text(caption, parse_mode="HTML", disable_web_page_preview=False)
+        except Exception:
+            await query.message.reply_text(caption, parse_mode="HTML", disable_web_page_preview=False)
+
+        # Every screenshot is captioned with the video code; albums are limited to 10 photos.
+        for start in range(0, len(screenshots), 10):
+            batch = screenshots[start:start + 10]
+            opened_files = []
+            try:
+                media = []
+                for screenshot in batch:
+                    handle = screenshot.open("rb")
+                    opened_files.append(handle)
+                    media.append(InputMediaPhoto(media=handle, caption=code))
+                await query.message.reply_media_group(media=media)
+            finally:
+                for handle in opened_files:
+                    handle.close()
+        await status.delete()
+    except Exception as exc:
+        LOGGER.exception("Combined download/upload/screenshot job failed")
+        try:
+            await status.edit_text(f"❌ Combined task failed: {html.escape(str(exc)[:600])}")
+        except Exception:
+            pass
+    finally:
+        ACTIVE_DOWNLOADS.discard(job_key)
+        if path:
+            try:
+                path.unlink(missing_ok=True)
+            except Exception:
+                pass
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 async def unknown_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_owner(update):
         await update.callback_query.answer("Owner only.", show_alert=True)
@@ -420,6 +578,8 @@ def main():
     application.add_handler(CallbackQueryHandler(download_callback, pattern=r"^d:"))
     application.add_handler(CallbackQueryHandler(screenshot_quantity_callback, pattern=r"^ss:"))
     application.add_handler(CallbackQueryHandler(screenshot_callback, pattern=r"^sc:"))
+    application.add_handler(CallbackQueryHandler(combined_quantity_callback, pattern=r"^both:"))
+    application.add_handler(CallbackQueryHandler(combined_callback, pattern=r"^bc:"))
     application.add_handler(CallbackQueryHandler(unknown_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_message))
     LOGGER.info("GoFile bot starting in owner-only mode; no database configured.")
