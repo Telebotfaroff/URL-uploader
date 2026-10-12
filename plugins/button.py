@@ -8,7 +8,7 @@ from datetime import datetime
 from pyrogram import enums
 from pyrogram.types import InputMediaPhoto
 from plugins.config import Config
-from plugins.download_manager import register_process, unregister_process
+from plugins.download_manager import register_process, unregister_process, register_upload, unregister_upload
 from plugins.script import Translation
 from plugins.thumbnail import *
 from plugins.functions.display_progress import progress_for_pyrogram, humanbytes
@@ -215,8 +215,9 @@ async def youtube_dl_call_back(bot, update):
         caption=Translation.UPLOAD_START.format(custom_file_name)
     )
     start_time = time.time()
-    thumbnail = None 
-
+    thumbnail = None
+    upload_cancelled = False
+    register_upload(update.from_user.id)
 
     try:
         if tg_send_type == "audio":
@@ -296,6 +297,7 @@ async def youtube_dl_call_back(bot, update):
             caption=f"Upload Error: {e}"
         )
 
+    unregister_upload(update.from_user.id)
     end_two = datetime.now()
     time_taken_for_upload = (end_two - end_one).seconds
 
@@ -310,11 +312,12 @@ async def youtube_dl_call_back(bot, update):
         except Exception as e:
             logger.error(f"Error removing thumbnail: {e}")
 
-    await update.message.edit_caption(
-        caption=Translation.AFTER_SUCCESSFUL_UPLOAD_MSG_WITH_TS.format(
-            time_taken_for_download, time_taken_for_upload
+    if not upload_cancelled:
+        await update.message.edit_caption(
+            caption=Translation.AFTER_SUCCESSFUL_UPLOAD_MSG_WITH_TS.format(
+                time_taken_for_download, time_taken_for_upload
+            )
         )
-    )
 
     logger.info(f"✅ Downloaded in: {time_taken_for_download} seconds")
     logger.info(f"✅ Uploaded in: {time_taken_for_upload} seconds")
