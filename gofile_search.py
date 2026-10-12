@@ -19,10 +19,9 @@ def _clean(value):
 
 
 def _page_url(code, page):
-    query = {"q": code}
-    if page > 1:
-        query["page"] = str(page)
-    return BASE_URL + "/zh/search?" + urlencode(query)
+    # Javtiful's search route is /search; page 1 omits the page parameter.
+    query = {"page": str(page), "q": code} if page > 1 else {"q": code}
+    return BASE_URL + "/search?" + urlencode(query)
 
 
 def _canonical(url):
