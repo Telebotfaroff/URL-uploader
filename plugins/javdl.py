@@ -443,21 +443,30 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
         queue = asyncio.Queue()
         for job in jobs:
             queue.put_nowait(job)
+        await _safe_edit(
+            status,
+            f"📊 BATCH IN PROGRESS • {speed.title()} MODE\n\n"
+            f"📺 {state.get('channel_name', 'Channel')}\n"
+            f"🎬 Videos queued: {len(jobs)}\n"
+            f"⬇️ Downloads: up to {download_limit} at once\n"
+            f"📤 Uploads: up to {upload_limit} at once\n"
+            f"🔁 Up to 2 retries per video\n\n"
+            f"✅ Uploaded: {uploaded}  •  ⏭️ Skipped: {skipped}  •  ❌ Failed: {failed}"
+        )
+
         async def worker():
             nonlocal uploaded, failed
-            item_status = await message.reply_text("🧵 Parallel worker ready…")
             while True:
                 try:
                     url, title = queue.get_nowait()
                 except asyncio.QueueEmpty:
                     return
-                await _safe_edit(item_status, f"🧵 Queued: {title}\n⏳ Waiting for a download slot…")
                 try:
                     uploaded_title = None
                     for attempt in range(1, 4):
                         try:
                             uploaded_title = await _download_and_upload(
-                                bot, message.chat.id, url, "best", item_status, caption=title,
+                                bot, message.chat.id, url, "best", status, caption=title,
                                 download_semaphore=download_semaphore,
                                 upload_semaphore=upload_semaphore,
                             )
@@ -465,26 +474,29 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
                         except Exception:
                             if attempt >= 3:
                                 raise
-                            await _safe_edit(item_status, f"🔁 Retry {attempt}/2: {title}")
+                            await _safe_edit(status, f"🔁 RETRY {attempt}/2\n🎬 {title[:180]}")
                             await asyncio.sleep(attempt * 2)
                     try:
                         await db.record_channel_upload(_canonical_video_url(url), url, uploaded_title or title)
                     except Exception:
                         logger.exception("Could not save successful upload to Neon history")
                     uploaded += 1
-                    await _safe_edit(item_status, f"✅ Complete: {uploaded_title or title}")
+                    await _safe_edit(
+                        status,
+                        f"✅ VIDEO COMPLETE\n🎬 {uploaded_title or title}\n\n"
+                        f"📊 {uploaded}/{len(jobs)} processed  •  ⏭️ {skipped} skipped  •  ❌ {failed} failed",
+                    )
                 except Exception as exc:
                     failed += 1
                     logger.exception("Channel video failed: %s", url)
-                    await _safe_edit(item_status, f"⚠️ Failed: {title}\n{type(exc).__name__}: {str(exc)[:400]}")
-                finally:
-                    queue.task_done()
                     await _safe_edit(
                         status,
-                        f"📊 Batch dashboard • {speed.title()} mode\n\n📺 {state.get('channel_name', 'Channel')}\n"
-                        f"📦 Waiting: {queue.qsize()} / {len(jobs)} total\n⬇️ Max downloads: {download_limit}\n📤 Max uploads: {upload_limit}\n🔁 Up to 2 retries per video\n\n"
-                        f"✅ Uploaded: {uploaded}\n⏭️ Skipped: {skipped} (already uploaded: {already_uploaded})\n❌ Failed: {failed}"
+                        f"⚠️ VIDEO FAILED\n🎬 {title[:180]}\n"
+                        f"{type(exc).__name__}: {str(exc)[:300]}\n\n"
+                        f"📊 {uploaded}/{len(jobs)} processed  •  ⏭️ {skipped} skipped  •  ❌ {failed} failed",
                     )
+                finally:
+                    queue.task_done()
         await asyncio.gather(*(worker() for _ in range(min(worker_count, len(jobs)))))
         await _safe_edit(status, 
             f"🏁 Listing processing finished\n\n📺 {state.get('channel_name', 'Channel')}\n"
