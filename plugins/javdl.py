@@ -331,14 +331,13 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
             queue.put_nowait(job)
         async def worker():
             nonlocal uploaded, failed
+            item_status = await message.reply_text("🧵 Parallel worker ready…")
             while True:
                 try:
                     url, title = queue.get_nowait()
                 except asyncio.QueueEmpty:
                     return
-                item_status = await message.reply_text(
-                    f"🧵 Queued: {title}\n⏳ Waiting for a download slot…"
-                )
+                await _safe_edit(item_status, f"🧵 Queued: {title}\\n⏳ Waiting for a download slot…")
                 try:
                     uploaded_title = await _download_and_upload(
                         bot, message.chat.id, url, "best", item_status, caption=title,
