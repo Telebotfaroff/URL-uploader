@@ -435,7 +435,7 @@ async def combined_quantity_callback(update: Update, context: ContextTypes.DEFAU
     await query.answer()
     title = html.escape(item.get("title") or item.get("code") or "Video")
     await query.message.reply_text(
-        f"📥📸 <b>{title}</b>\\nChoose screenshot quantity. I'll upload the video to GoFile and send screenshots too:",
+        f"📥📸 <b>{title}</b>\nChoose screenshot quantity. I'll upload the video to GoFile and send screenshots too:",
         parse_mode="HTML",
         reply_markup=_combined_quantity_keyboard(search_id, index),
     )
@@ -514,7 +514,7 @@ async def combined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         title = html.escape(item.get("title") or video.title or "Video")
         code = html.escape(item.get("code") or "Unknown")
         caption = (
-            f"<b>{title}</b>\\n🎞 Code: <code>{code}</code>\\n"
+            f"<b>{title}</b>\n🎞 Code: <code>{code}</code>\n"
             f"📦 Quality: {html.escape(str(quality))}\\n"
             f"🔗 <a href=\\"{html.escape(link, quote=True)}\\">Open GoFile download</a>"
         )
