@@ -16,7 +16,8 @@ logger = logging.getLogger(__name__)
 
 
 
-@Client.on_callback_query()
+# Let the dedicated Javtiful handler process its own pipe-delimited callbacks.
+@Client.on_callback_query(~filters.regex(r"^javdl\\|"))
 async def button(bot, update):
     if update.data == "home":
         await update.message.edit(
