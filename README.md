@@ -11,7 +11,7 @@ A lightweight, personal-use Telegram bot that searches Javtiful by video code, l
 - Download a selected result and upload it to GoFile without a GoFile account token.
 - Extract 5, 10, 15, or 20 evenly spaced screenshots from a selected video using the **SS** button.
 - For **SS**, **DL + SS**, and bulk screenshot jobs, choose whether screenshots go to the current chat or private Telegram channel `-1003963567446`.
-- Bulk mode: send up to 20 video codes separated by new lines, commas, or semicolons, then choose **Download all**, **Screenshots all**, or **Download + Screenshots all**. Screenshot actions let you choose quantity and destination. Bulk jobs run through a bounded parallel pipeline and report each video's progress, success/failure, and GoFile URL.
+- Bulk mode: send up to 20 video codes separated by new lines, commas, or semicolons, then choose **Download all**, **Screenshots all**, or **Download + Screenshots all**. Screenshot actions let you choose quantity and destination. Bulk jobs run through a bounded parallel pipeline with per-video progress; successful codes are consolidated into one compact message (for example, `START-618✅ START-627✅ IPZZ-950✅`).
 - Display the GoFile URL as visible, copyable text in the result message.
 - Show separate per-video download/upload progress, transfer speed, and ETA when available.\n- Configure bulk parallelism with `/parallel`: 1–5 download workers, 1–3 GoFile upload workers, and 1–2 screenshot workers. Defaults are 3 downloads, 2 uploads, and 1 screenshot worker.\n- Bound active video jobs by the download-worker count and clean up each video's temporary files after processing to limit Colab disk usage.
 - Restrict bot commands and button callbacks to your Telegram user ID.
