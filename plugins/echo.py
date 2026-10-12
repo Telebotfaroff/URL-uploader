@@ -86,8 +86,7 @@ async def echo(bot, update):
             youtube_dl_username = youtube_dl_username.strip()
         if youtube_dl_password is not None:
             youtube_dl_password = youtube_dl_password.strip()
-        logger.info(url)
-        logger.info(file_name)
+        logger.info("Preparing URL metadata extraction; URL and credentials omitted from logs")
     else:
         for entity in update.entities:
             if entity.type == "text_link":
@@ -134,7 +133,7 @@ async def echo(bot, update):
     if youtube_dl_password is not None:
         command_to_exec.append("--password")
         command_to_exec.append(youtube_dl_password)
-    logger.info(command_to_exec)
+    logger.info("Starting yt-dlp metadata extraction; sensitive arguments redacted")
     chk = await bot.send_message(
             chat_id=update.chat.id,
             text=f'Pʀᴏᴄᴇssɪɴɢ ʏᴏᴜʀ ʟɪɴᴋ ⌛',
