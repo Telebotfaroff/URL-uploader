@@ -72,6 +72,7 @@ class Downloader:
                     break
                 path.unlink(missing_ok=True)
 
+        path.unlink(missing_ok=True)
         raise RuntimeError(
             f"HTTP download failed after {self.retries} attempts: {last_error}"
         ) from last_error
@@ -94,9 +95,14 @@ class Downloader:
         ]
 
         try:
-            subprocess.run(command, check=True)
+            # A stalled HLS source must not hold a worker forever.
+            subprocess.run(command, check=True, timeout=900)
         except FileNotFoundError as exc:
+            path.unlink(missing_ok=True)
             raise RuntimeError("FFmpeg is required to download HLS (.m3u8) streams") from exc
+        except subprocess.TimeoutExpired as exc:
+            path.unlink(missing_ok=True)
+            raise RuntimeError("FFmpeg HLS download timed out after 900 seconds") from exc
         except subprocess.CalledProcessError as exc:
             path.unlink(missing_ok=True)
             raise RuntimeError(f"FFmpeg HLS download failed with exit code {exc.returncode}") from exc
