@@ -77,6 +77,12 @@ class Database:
                             uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                         )
                     """)
+                    await conn.execute("""
+                        CREATE TABLE IF NOT EXISTS bot_settings (
+                            key TEXT PRIMARY KEY,
+                            value TEXT NOT NULL
+                        )
+                    """)
                 self._schema_ready = True
         return pool
 
@@ -173,6 +179,28 @@ class Database:
         pool = await self._ensure_schema()
         row = await pool.fetchrow("SELECT * FROM users WHERE id = $1", int(id))
         return dict(row) if row else None
+
+    async def get_setting(self, key, default=None):
+        pool = await self._ensure_schema()
+        value = await pool.fetchval(
+            "SELECT value FROM bot_settings WHERE key = $1",
+            str(key),
+        )
+        return value if value is not None else default
+
+    async def set_setting(self, key, value):
+        pool = await self._ensure_schema()
+        if value is None:
+            await pool.execute("DELETE FROM bot_settings WHERE key = $1", str(key))
+            return
+        await pool.execute(
+            """
+            INSERT INTO bot_settings (key, value) VALUES ($1, $2)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+            """,
+            str(key),
+            str(value),
+        )
 
     async def is_channel_video_uploaded(self, canonical_url):
         pool = await self._ensure_schema()
