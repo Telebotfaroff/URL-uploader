@@ -197,8 +197,18 @@ async def _download_and_upload(bot, chat_id, url, quality, status, caption=None)
         upload_state = {"time": 0.0}
         title = video.title or "Video"
         await status.edit_text(f"📤 Uploading: {title}")
+        # Upload to the configured dump channel first; if it fails, use the user's chat.
+        dump_chat_id = None
+        try:
+            saved_dump_chat = await db.get_setting("dump_chat_id")
+            if saved_dump_chat:
+                dump_chat_id = int(saved_dump_chat)
+        except Exception:
+            logger.exception("Could not read configured dump channel; using user chat")
+
+        target_chat_id = dump_chat_id if dump_chat_id is not None else chat_id
         send_kwargs = {
-            "chat_id": chat_id,
+            "chat_id": target_chat_id,
             "video": video.local_path,
             "caption": (caption or title)[:1024],
             "supports_streaming": True,
@@ -212,8 +222,23 @@ async def _download_and_upload(bot, chat_id, url, quality, status, caption=None)
             send_kwargs["duration"] = duration
         if thumb_path:
             send_kwargs["thumb"] = thumb_path
-        await bot.send_video(**send_kwargs)
-        await status.edit_text(f"✅ Uploaded successfully\n\n🎬 {title}\n🎚 Quality: {video.selected_quality or quality}")
+        try:
+            await bot.send_video(**send_kwargs)
+            destination_note = "\\n📦 Destination: dump channel" if dump_chat_id is not None else ""
+        except Exception:
+            if dump_chat_id is None:
+                raise
+            logger.exception("Upload to dump channel failed; falling back to user chat")
+            await status.edit_text("⚠️ Dump-channel upload failed. Retrying in your chat…")
+            send_kwargs["chat_id"] = chat_id
+            upload_state["time"] = 0.0
+            upload_state["started"] = time.monotonic()
+            await bot.send_video(**send_kwargs)
+            destination_note = "\\n↩️ Destination: your chat (fallback)"
+        await status.edit_text(
+            f"✅ Uploaded successfully\\n\\n🎬 {title}\\n"
+            f"🎚 Quality: {video.selected_quality or quality}{destination_note}"
+        )
         return title
     finally:
         for path in (getattr(video, "local_path", None), thumb_path):
@@ -310,6 +335,70 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
         pending.pop(user_id, None)
 
 
+@Client.on_message(filters.private & filters.command(["setdump"], ["/", "."]))
+async def set_dump_command(bot, message):
+    """Set or clear the destination channel for video uploads (owner only)."""
+    if not message.from_user or message.from_user.id != Config.OWNER_ID:
+        return await message.reply_text("⛔ Only the bot owner can change the dump channel.")
+
+    parts = message.command or []
+    if len(parts) < 2:
+        try:
+            saved = await db.get_setting("dump_chat_id")
+        except Exception as exc:
+            logger.exception("Could not read dump-channel setting")
+            return await message.reply_text(
+                f"❌ Could not read dump-channel setting: {type(exc).__name__}. Check DATABASE_URL."
+            )
+        if not saved:
+            return await message.reply_text(
+                "📦 Dump channel is not configured.\\n\\n"
+                "Use /setdump @channelusername or /setdump -1001234567890\\n"
+                "Use /setdump off to disable it. The bot must be an administrator with permission to post."
+            )
+        try:
+            chat = await bot.get_chat(int(saved))
+            label = f"@{chat.username}" if chat.username else (chat.title or str(chat.id))
+        except Exception:
+            label = saved
+        return await message.reply_text(f"📦 Current dump channel: {label} (ID: {saved})\\n\\nUse /setdump off to disable it.")
+
+    target = parts[1].strip()
+    if target.lower() in {"off", "none", "disable"}:
+        try:
+            await db.set_setting("dump_chat_id", None)
+        except Exception as exc:
+            logger.exception("Could not clear dump-channel setting")
+            return await message.reply_text(f"❌ Could not save setting: {type(exc).__name__}. Check DATABASE_URL.")
+        return await message.reply_text("✅ Dump channel disabled. Videos will upload to the user chat.")
+
+    try:
+        chat = await bot.get_chat(target if target.startswith("@") else int(target))
+        if str(getattr(chat.type, "value", chat.type)).lower().split(".")[-1] != "channel":
+            return await message.reply_text("❌ Please provide a Telegram channel username or channel ID.")
+        me = await bot.get_me()
+        member = await bot.get_chat_member(chat.id, me.id)
+        member_status = str(getattr(member.status, "value", member.status)).lower().split(".")[-1]
+        if member_status not in {"administrator", "owner", "creator"}:
+            return await message.reply_text("❌ Make the bot an administrator in that channel with permission to post messages, then try again.")
+        privileges = getattr(member, "privileges", None)
+        if member_status == "administrator" and privileges is not None and getattr(privileges, "can_post_messages", True) is False:
+            return await message.reply_text("❌ The bot needs the channel permission to post messages.")
+        await db.set_setting("dump_chat_id", chat.id)
+    except Exception as exc:
+        logger.exception("Failed to validate/save dump channel")
+        return await message.reply_text(
+            f"❌ Could not configure that channel ({type(exc).__name__}). "
+            "Add the bot as an administrator with post permission and check DATABASE_URL."
+        )
+
+    label = f"@{chat.username}" if chat.username else (chat.title or str(chat.id))
+    await message.reply_text(
+        f"✅ Dump channel saved: {label} (ID: {chat.id}).\\n"
+        "Uploads will go there first. If a dump-channel upload fails, the bot will retry in your chat."
+    )
+
+
 @Client.on_message(filters.private & filters.command(["vid"], ["/", "."]))
 async def vid_command(bot, message):
     parts = message.command or []
@@ -345,7 +434,7 @@ async def javtiful_channel_command(bot, message):
     if len(parts) < 2:
         return await message.reply_text(
             "Usage: /channel https://javtiful.com/channel/…\n\n"
-            "This command inspects a Javtiful channel and offers first-page or batch downloads. Uploaded videos are sent to this chat."
+            "This command inspects a Javtiful channel and offers first-page or batch downloads. Videos go to the configured dump channel first, with your chat as fallback. Configure it with /setdump."
         )
     url = parts[1].strip()
     if not _valid_url(url, "/channel/"):
