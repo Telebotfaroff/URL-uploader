@@ -515,8 +515,8 @@ async def combined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         code = html.escape(item.get("code") or "Unknown")
         caption = (
             f"<b>{title}</b>\n🎞 Code: <code>{code}</code>\n"
-            f"📦 Quality: {html.escape(str(quality))}\\n"
-            f"🔗 <a href=\\"{html.escape(link, quote=True)}\\">Open GoFile download</a>"
+            f"📦 Quality: {html.escape(str(quality))}\n"
+            f"🔗 <a href=\"{html.escape(link, quote=True)}\">Open GoFile download</a>"
         )
         thumb = video.thumbnail or item.get("thumbnail")
         try:
