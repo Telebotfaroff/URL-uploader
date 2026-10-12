@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import re
+import subprocess
 import time
 from pathlib import Path
 from urllib.parse import urlparse
@@ -116,6 +117,36 @@ async def _upload_progress(current, total, message, title, state):
     )
 
 
+def _video_duration_seconds(path, fallback=None):
+    """Read the actual media duration, falling back to extractor metadata."""
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        duration = float(result.stdout.strip())
+        if duration > 0:
+            return max(1, round(duration))
+    except (FileNotFoundError, subprocess.SubprocessError, ValueError):
+        logger.debug("Unable to read duration with ffprobe", exc_info=True)
+
+    try:
+        duration = float(fallback)
+        if duration > 0:
+            return max(1, round(duration))
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
 def _download_thumbnail(url):
     if not url:
         return None
@@ -160,8 +191,11 @@ async def _download_and_upload(bot, chat_id, url, quality, status, caption=None)
             "progress": _upload_progress,
             "progress_args": (status, title, upload_state),
         }
-        if video.duration:
-            send_kwargs["duration"] = int(video.duration)
+        duration = await asyncio.to_thread(
+            _video_duration_seconds, video.local_path, video.duration
+        )
+        if duration:
+            send_kwargs["duration"] = duration
         if thumb_path:
             send_kwargs["thumb"] = thumb_path
         await bot.send_video(**send_kwargs)
