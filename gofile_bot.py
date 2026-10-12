@@ -51,9 +51,17 @@ def _bar(current, total, width=12):
     return "█" * filled + "░" * (width - filled) + f" {percent}%"
 
 
-def _transfer_text(phase, current, total, state):
+def _transfer_text(phase, current, total, state, mode="bytes"):
     now = time.monotonic()
     elapsed = max(now - state.setdefault("started", now), 0.1)
+    if mode == "time" and total > 0:
+        percent = min(100, int(current * 100 / total))
+        filled = min(12, percent * 12 // 100)
+        bar = "█" * filled + "░" * (12 - filled)
+        eta = max(0, int(total - current))
+        current_text = f"{int(current) // 60:02d}:{int(current) % 60:02d}"
+        total_text = f"{int(total) // 60:02d}:{int(total) % 60:02d}"
+        return f"{phase}\n{bar} {percent}%\n🎞 Processed {current_text} / {total_text}\n⏳ ETA {eta // 60:02d}:{eta % 60:02d}"
     speed = current / elapsed
     if total > 0:
         eta = max(0, int((total - current) / speed)) if speed > 0 else 0
@@ -68,13 +76,13 @@ def _transfer_text(phase, current, total, state):
     )
 
 
-async def _update_transfer(message, phase, current, total, state, force=False):
+async def _update_transfer(message, phase, current, total, state, force=False, mode="bytes"):
     now = time.monotonic()
     if not force and now - state.get("last_edit", 0) < 2.0:
         return
     state["last_edit"] = now
     try:
-        await message.edit_text(_transfer_text(phase, current, total, state))
+        await message.edit_text(_transfer_text(phase, current, total, state, mode=mode))
     except Exception as exc:
         if "message is not modified" not in str(exc).lower():
             LOGGER.debug("Progress message edit failed: %s", type(exc).__name__)
@@ -213,9 +221,9 @@ async def download_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         loop = asyncio.get_running_loop()
         download_state = {"started": time.monotonic(), "last_edit": 0.0}
-        def download_progress(current, total):
+        def download_progress(current, total, mode="bytes"):
             asyncio.run_coroutine_threadsafe(
-                _update_transfer(status, "⬇️ DOWNLOADING", current, total, download_state),
+                _update_transfer(status, "⬇️ DOWNLOADING", current, total, download_state, mode=mode),
                 loop,
             )
         video, path, quality = await asyncio.to_thread(
