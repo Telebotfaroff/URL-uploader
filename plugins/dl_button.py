@@ -198,7 +198,8 @@ async def ddl_call_back(bot, update):
                     progress_args=(
                         Translation.UPLOAD_START,
                         update.message,
-                        start_time
+                        start_time,
+                        update.from_user.id,
                     )
                 )
             else:
@@ -217,7 +218,8 @@ async def ddl_call_back(bot, update):
                     progress_args=(
                         Translation.UPLOAD_START,
                         update.message,
-                        start_time
+                        start_time,
+                        update.from_user.id,
                     )
                 )
 
