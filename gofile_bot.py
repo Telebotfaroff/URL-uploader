@@ -241,7 +241,7 @@ async def download_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status.edit_text("✅ GoFile upload complete. Sending the result…")
         thumb = video.thumbnail or item.get("thumbnail")
         caption = (
-            f"<b>{html.escape(video.title or item['title'])}</b>\n"
+            f"<b>{html.escape(item.get('title') or video.title or 'Video')}</b>\n"
             f"📦 Quality: {html.escape(str(quality))}\n"
             f"🔗 <a href=\"{html.escape(link, quote=True)}\">Open GoFile download</a>"
         )
