@@ -8,7 +8,9 @@ A lightweight, personal-use Telegram bot that searches Javtiful by video code, l
 
 - Search Javtiful using full codes such as `HNTRZ-010` or prefixes such as `IPZZ`.
 - Browse matching results with thumbnails and Previous/Next buttons.
-- Download a selected result and upload it to GoFile without a GoFile account token.\n- Extract 5, 10, 15, or 20 evenly spaced screenshots from a selected video using the **SS** button.
+- Download a selected result and upload it to GoFile without a GoFile account token.
+- Extract 5, 10, 15, or 20 evenly spaced screenshots from a selected video using the **SS** button.
+- Upload screenshots to Freeimage.host and return individual viewer/direct links as a gallery list when an API key is configured.
 - Use **DL + SS** to upload the video to GoFile and generate screenshots in one job; choose the screenshot quantity when prompted.
 - Display the GoFile URL as visible, copyable text in the result message.
 - Show download/upload progress, transfer speed, and ETA when available.
@@ -23,6 +25,7 @@ You need your Telegram bot token, entered directly in the Colab Setup cell:
 | --- | --- |
 | `BOT_TOKEN` | Entered at runtime in the Setup cell; input is hidden and it is not stored in the notebook source. |
 | `OWNER_ID` | Optional override; defaults to `7367490186` in `gofile_bot.py`. |
+| `FREEIMAGE_API_KEY` | Optional; enter during Colab Setup to host screenshot galleries on Freeimage.host. |
 
 No database, Neon, `API_ID`, `API_HASH`, or GoFile API token is required. FFmpeg is installed by the Colab notebook to support HLS streams.
 
@@ -41,6 +44,7 @@ No database, Neon, `API_ID`, `API_HASH`, or GoFile API token is required. FFmpeg
 - `gofile_search.py` — Javtiful code search, result parsing, and pagination.
 - `gofile_media.py` — video extraction and downloading.
 - `gofile_uploader.py` — GoFile guest upload.
+- `gofile_image_host.py` — Freeimage.host API uploads for screenshot galleries.
 - `plugins/javdl_core/` — Javtiful media extraction components.
 - `URL_Uploader_Gofile_Colab.ipynb` — setup, checks, and run cells.
 - `tests/test_gofile_bot.py` — basic regression tests.
