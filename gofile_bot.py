@@ -759,11 +759,8 @@ async def run_bulk_jobs(query, batch, mode, screenshot_count, destination="chat"
     )
     completed, failed = [], []
     results_lock = asyncio.Lock()
-    progress_lock = asyncio.Lock()
-    finished_count = 0
 
     async def process_one(position, row):
-        nonlocal finished_count
         item, code = row["item"], row["requested_code"]
         job_key = (OWNER_ID, item["url"])
         async with inflight_limit:
@@ -832,10 +829,21 @@ async def run_bulk_jobs(query, batch, mode, screenshot_count, destination="chat"
                     await _send_screenshot_albums(
                         query.get_bot(), screenshots, code_html, destination_chat_id
                     )
+                # Update the same combined message immediately after each successful
+                # video task. Locking prevents parallel completions from overwriting
+                # a newer success list with an older snapshot.
                 async with results_lock:
                     completed.append(code)
-                # Remove successful per-video progress messages; the final status
-                # message will contain the compact combined code list.
+                    completed_set = set(completed)
+                    success_codes = [
+                        result_row["requested_code"] for result_row in rows
+                        if result_row["requested_code"] in completed_set
+                    ]
+                    try:
+                        await status.edit_text(_bulk_success_message(success_codes))
+                    except Exception:
+                        pass
+                # Remove the successful video's individual progress message.
                 try:
                     await item_status.delete()
                 except Exception:
@@ -860,16 +868,6 @@ async def run_bulk_jobs(query, batch, mode, screenshot_count, destination="chat"
                         pass
                 import shutil
                 shutil.rmtree(temp_dir, ignore_errors=True)
-                async with progress_lock:
-                    finished_count += 1
-                    done = finished_count
-                    try:
-                        await status.edit_text(
-                            f"⏳ Bulk progress: {done}/{total} finished\n"
-                            f"⬇️ Downloads: {settings['downloads']} • 📸 Screenshots: {settings['screenshots']} • ☁️ Uploads: {settings['uploads']}"
-                        )
-                    except Exception:
-                        pass
 
     await asyncio.gather(*(process_one(i, row) for i, row in enumerate(rows, 1)))
     # Preserve the original input order even when parallel jobs finish out of order.
