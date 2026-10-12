@@ -274,7 +274,7 @@ async def download_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption = (
             f"<b>{html.escape(item.get('title') or video.title or 'Video')}</b>\n"
             f"📦 Quality: {html.escape(str(quality))}\n"
-            f"🔗 <a href=\"{html.escape(link, quote=True)}\">Open GoFile download</a>"
+            f"🔗 GoFile link (copy):\\n<code>{html.escape(link)}</code>"
         )
         try:
             if thumb:
@@ -516,7 +516,7 @@ async def combined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption = (
             f"<b>{title}</b>\n🎞 Code: <code>{code}</code>\n"
             f"📦 Quality: {html.escape(str(quality))}\n"
-            f"🔗 <a href=\"{html.escape(link, quote=True)}\">Open GoFile download</a>"
+            f"🔗 GoFile link (copy):\\n<code>{html.escape(link)}</code>"
         )
         thumb = video.thumbnail or item.get("thumbnail")
         try:
