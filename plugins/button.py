@@ -8,6 +8,7 @@ from datetime import datetime
 from pyrogram import enums
 from pyrogram.types import InputMediaPhoto
 from plugins.config import Config
+from plugins.download_manager import register_process, unregister_process
 from plugins.script import Translation
 from plugins.thumbnail import *
 from plugins.functions.display_progress import progress_for_pyrogram, humanbytes
@@ -145,8 +146,11 @@ async def youtube_dl_call_back(bot, update):
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-
-    stdout, stderr = await process.communicate()
+    register_process(update.from_user.id, process)
+    try:
+        stdout, stderr = await process.communicate()
+    finally:
+        unregister_process(update.from_user.id, process)
     e_response = stderr.decode().strip()
     t_response = stdout.decode().strip()
     logger.info(e_response)
@@ -227,7 +231,8 @@ async def youtube_dl_call_back(bot, update):
                 progress_args=(
                     Translation.UPLOAD_START,
                     update.message,
-                    start_time
+                    start_time,
+                    update.from_user.id,
                 )
             )
 
@@ -243,7 +248,8 @@ async def youtube_dl_call_back(bot, update):
                 progress_args=(
                     Translation.UPLOAD_START,
                     update.message,
-                    start_time
+                    start_time,
+                    update.from_user.id,
                 )
             )
 
