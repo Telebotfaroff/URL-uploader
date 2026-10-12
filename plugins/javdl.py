@@ -31,6 +31,10 @@ pending = {}
 active_saved_batches = set()
 MAX_CHANNEL_PAGES = 50
 MAX_BATCH_VIDEOS = 200
+PARALLEL_SPEED_PROFILES = {"safe": (1, 1), "balanced": (2, 2), "fast": (3, 3)}
+DEFAULT_PARALLEL_SPEED = os.getenv("PARALLEL_SPEED", "balanced").strip().lower()
+if DEFAULT_PARALLEL_SPEED not in PARALLEL_SPEED_PROFILES:
+    DEFAULT_PARALLEL_SPEED = "balanced"
 def _canonical_video_url(url):
     """Normalize URLs so query strings and trailing slashes don't create duplicates."""
     parsed = urlparse(str(url or "").strip())
@@ -360,8 +364,8 @@ def _quality_keyboard(qualities):
     return InlineKeyboardMarkup(rows)
 
 
-def _channel_keyboard(skip_uploaded=True, speed="balanced"):
-    profiles = {"safe": (1, 1), "balanced": (2, 2), "fast": (3, 3)}
+def _channel_keyboard(skip_uploaded=True, speed=DEFAULT_PARALLEL_SPEED):
+    profiles = PARALLEL_SPEED_PROFILES
     down, up = profiles.get(speed, profiles["balanced"])
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(
@@ -379,8 +383,8 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
     uploaded = failed = skipped = already_uploaded = 0
     seen = set()
     skip_uploaded = bool(state.get("skip_uploaded", True))
-    profiles = {"safe": (1, 1), "balanced": (2, 2), "fast": (3, 3)}
-    speed = state.get("speed", "balanced")
+    profiles = PARALLEL_SPEED_PROFILES
+    speed = state.get("speed", DEFAULT_PARALLEL_SPEED)
     download_limit, upload_limit = profiles.get(speed, profiles["balanced"])
     download_semaphore = asyncio.Semaphore(download_limit)
     upload_semaphore = asyncio.Semaphore(upload_limit)
@@ -554,7 +558,7 @@ async def saved_channels_command(bot, message):
                 state = {
                     "type": "channel",
                     "listing_type": "channel",
-                    "speed": "balanced",
+                    "speed": DEFAULT_PARALLEL_SPEED,
                     "url": url,
                     "channel_name": info.get("channel_name") or f"Channel {index}",
                     "total_pages": max(1, int(info.get("total_pages") or 1)),
@@ -613,7 +617,7 @@ async def resume_batch_command(bot, message):
             "total_pages": max(1, int(info.get("total_pages") or 1)),
             "total_videos": info.get("total_videos"),
             "first_page": {"items": info.get("first_page_items") or []},
-            "skip_uploaded": True, "speed": data.get("speed", "balanced"),
+            "skip_uploaded": True, "speed": data.get("speed", DEFAULT_PARALLEL_SPEED),
         }
         pending[user_id] = state
         await _safe_edit(status, "🔄 Resuming saved batch. Upload history will skip completed videos.")
@@ -736,7 +740,7 @@ async def javtiful_channel_command(bot, message):
         state = {
             "type": "channel",
             "listing_type": "channel",
-            "speed": "balanced",
+            "speed": DEFAULT_PARALLEL_SPEED,
             "url": url,
             "channel_name": info.get("channel_name") or "Channel",
             "total_pages": total_pages,
@@ -752,7 +756,7 @@ async def javtiful_channel_command(bot, message):
             f"📄 Pages: {total_pages}\n"
             f"📌 First-page entries: {len(state['first_page']['items'])}\n\n"
             "Choose what to process:",
-            reply_markup=_channel_keyboard(state.get("skip_uploaded", True), state.get("speed", "balanced")),
+            reply_markup=_channel_keyboard(state.get("skip_uploaded", True), state.get("speed", DEFAULT_PARALLEL_SPEED)),
         )
     except Exception as exc:
         logger.exception("JAVDL channel inspection failed")
@@ -779,7 +783,7 @@ async def actress_command(bot, message):
             "total_videos": info.get("total_videos"),
             "first_page": {"items": info.get("first_page_items") or []},
         }
-        state["speed"] = "balanced"
+        state["speed"] = DEFAULT_PARALLEL_SPEED
         state["listing_type"] = "actress"
         state["skip_uploaded"] = True
         pending[message.from_user.id] = state
@@ -790,7 +794,7 @@ async def actress_command(bot, message):
             f"📄 Pages: {total_pages}\n"
             f"📌 First-page entries: {len(state['first_page']['items'])}\n\n"
             "Choose what to process:",
-            reply_markup=_channel_keyboard(state.get("skip_uploaded", True), state.get("speed", "balanced")),
+            reply_markup=_channel_keyboard(state.get("skip_uploaded", True), state.get("speed", DEFAULT_PARALLEL_SPEED)),
         )
     except Exception as exc:
         logger.exception("Javtiful actress listing inspection failed")
@@ -830,7 +834,7 @@ async def javdl_callback(bot, query):
         if state.get("processing"):
             return await query.answer("A batch is already running.", show_alert=True)
         cycle = {"safe": "balanced", "balanced": "fast", "fast": "safe"}
-        state["speed"] = cycle.get(state.get("speed", "balanced"), "balanced")
+        state["speed"] = cycle.get(state.get("speed", DEFAULT_PARALLEL_SPEED), "balanced")
         await query.answer(f"Speed mode: {state['speed'].title()}")
         return await query.message.edit_reply_markup(
             reply_markup=_channel_keyboard(state.get("skip_uploaded", True), state["speed"])
