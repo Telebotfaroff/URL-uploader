@@ -11,6 +11,7 @@ import time
 from datetime import datetime
 
 from plugins.config import Config
+from plugins.download_manager import register_upload, unregister_upload
 from plugins.script import Translation
 from plugins.thumbnail import *
 from plugins.database.database import db
@@ -233,6 +234,7 @@ async def ddl_call_back(bot, update):
             parse_mode=enums.ParseMode.HTML
         )
 
+    unregister_upload(update.from_user.id)
     end_two = datetime.now()
     time_taken_for_upload = (end_two - end_one).seconds
 
@@ -248,12 +250,13 @@ async def ddl_call_back(bot, update):
         except Exception as e:
             logger.error(f"Error removing thumbnail: {e}")
 
-    await update.message.edit_caption(
-        caption=Translation.AFTER_SUCCESSFUL_UPLOAD_MSG_WITH_TS.format(
-            time_taken_for_download, time_taken_for_upload
-        ),
-        parse_mode=enums.ParseMode.HTML
-    )
+    if not upload_cancelled:
+        await update.message.edit_caption(
+            caption=Translation.AFTER_SUCCESSFUL_UPLOAD_MSG_WITH_TS.format(
+                time_taken_for_download, time_taken_for_upload
+            ),
+            parse_mode=enums.ParseMode.HTML
+        )
 
 
 async def download_coroutine(bot, session, url, file_name, chat_id, message_id, start):
