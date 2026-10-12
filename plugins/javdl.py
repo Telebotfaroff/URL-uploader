@@ -517,6 +517,10 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
     download_limit, upload_limit = profiles.get(speed, profiles["balanced"])
     download_semaphore = asyncio.Semaphore(download_limit)
     upload_semaphore = asyncio.Semaphore(upload_limit)
+    # Backpressure: reserve a pipeline slot BEFORE downloading. Allow at most
+    # upload_limit active uploads plus one waiting/download slot per uploader.
+    # This prevents completed downloads from piling up on disk behind uploads.
+    pipeline_slots = asyncio.Semaphore(upload_limit * 2)
     worker_count = download_limit + upload_limit
     try:
         total_pages = max(1, min(int(state.get("total_pages") or 1), MAX_CHANNEL_PAGES))
@@ -589,6 +593,9 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
                     url, title = queue.get_nowait()
                 except asyncio.QueueEmpty:
                     return
+                # Hold this slot from before download until upload (or failure)
+                # finishes, so slow uploads naturally pause new downloads.
+                await pipeline_slots.acquire()
                 try:
                     uploaded_title = None
                     for attempt in range(1, 4):
@@ -628,6 +635,7 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
                     else:
                         await _safe_edit(status, f"⚠️ VIDEO FAILED\\n🎬 {title[:180]}\\n{type(exc).__name__}: {str(exc)[:300]}\\n\\n📊 {uploaded}/{len(jobs)} processed  •  ⏭️ {skipped} skipped  •  ❌ {failed} failed")
                 finally:
+                    pipeline_slots.release()
                     queue.task_done()
         await asyncio.gather(*(worker() for _ in range(min(worker_count, len(jobs)))))
         await _safe_edit(status, 
