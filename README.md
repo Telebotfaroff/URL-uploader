@@ -1,24 +1,24 @@
-# Javtiful → GoFile Telegram bot
+# Javtiful → GoFile Telegram Bot
 
-This is a separate, database-free bot entry point for the \`gofile\` branch. It does not use Pyrogram, Telegram API_ID/API_HASH, Neon, or any database.
+A minimal, owner-only Telegram bot that searches Javtiful by video code, downloads a selected result, and uploads it to GoFile as a guest.
 
-## Required environment variables
+## Required secrets
 
-- \`BOT_TOKEN\`: Telegram bot token from BotFather.
-- \`OWNER_ID\`: your numeric Telegram user ID.
+- `BOT_TOKEN` — Telegram bot token.
+- `OWNER_ID` — your numeric Telegram user ID.
 
-## Run in Colab
+No database, Neon, `API_ID`, `API_HASH`, or GoFile token is required.
 
-Use the dedicated \`URL_Uploader_Gofile_Colab.ipynb\` notebook. Add only \`BOT_TOKEN\` and \`OWNER_ID\` to Colab Secrets, enable notebook access, and run the cells in order.
+## Run in Google Colab
 
-## Features
+Open `URL_Uploader_Gofile_Colab.ipynb`, add the two secrets above to Colab Secrets, enable notebook access, and run the cells in order.
 
-- Search Javtiful by video code, such as \`STAR-765\`.
-- Browse results with Previous/Next buttons and thumbnails.
-- Download a selected video using the existing Javtiful media extractor.
-- Upload to GoFile without an account token (guest upload).
-- Show download/upload progress, transfer rate, and ETA when the source exposes enough information.
-- Restrict commands and callbacks to \`OWNER_ID\`.
-- Store search sessions in memory only; no database or persistent history.
+## Included features
 
-The Javtiful website may change its HTML or playback system. Search and extraction must be tested live in the running environment; no live site test is implied by source compilation alone.
+- Search results with thumbnails and previous/next navigation.
+- Download and guest-upload buttons.
+- Download/upload progress, speed, and ETA when available.
+- Owner-only commands and callbacks.
+- In-memory search sessions; no database or persistent history.
+
+Javtiful may change its site or playback format, so verify live search/download behavior in Colab. Source checks do not prove that the live integration works.
