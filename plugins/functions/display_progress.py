@@ -8,15 +8,20 @@ from pyrogram import enums
 
 
 
-async def progress_for_pyrogram(current, total, ud_type, message, start):
+async def progress_for_pyrogram(current, total, ud_type, message, start, user_id=None):
     now = time.time()
-    diff = now - start
-    if round(diff % 10.00) == 0 or current == total:
-        percentage = current * 100 / total
-        speed = current / diff
-        elapsed_time = round(diff) * 1000
-        time_to_completion = round((total - current) / speed) * 1000
-        estimated_total_time = elapsed_time + time_to_completion
+    diff = max(now - start, 0.001)
+    if not hasattr(progress_for_pyrogram, "_last_update"):
+        progress_for_pyrogram._last_update = {}
+    message_key = id(message)
+    if now - progress_for_pyrogram._last_update.get(message_key, 0) < 2 and current != total:
+        return
+    progress_for_pyrogram._last_update[message_key] = now
+    percentage = min(100.0, current * 100 / total) if total else 0.0
+    speed = current / diff if diff > 0 else 0.0
+    elapsed_time = round(diff * 1000)
+    time_to_completion = round(max(total - current, 0) / speed * 1000) if total and speed > 0 else 0
+    estimated_total_time = elapsed_time + time_to_completion
 
         elapsed_time = TimeFormatter(milliseconds=elapsed_time)
         estimated_total_time = TimeFormatter(milliseconds=estimated_total_time)
@@ -43,7 +48,7 @@ async def progress_for_pyrogram(current, total, ud_type, message, start):
                 reply_markup=InlineKeyboardMarkup(
                     [
                         [ 
-                        InlineKeyboardButton('⛔ Cancel', callback_data=f"cancel_download+{id}", style=enums.ButtonStyle.DANGER)
+                        InlineKeyboardButton('⛔ Cancel', callback_data=f"cancel_download+{user_id}" if user_id is not None else "cancel_download+unknown", style=enums.ButtonStyle.DANGER)
                        ]
                    ]
                  )
