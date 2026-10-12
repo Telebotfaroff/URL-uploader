@@ -199,6 +199,105 @@ def _progress_details(current, total, state):
     return f"{bar} {percent_text}\n{size_text} • {speed_mb:.2f} MB/s • ETA {eta}"
 
 
+# One shared live dashboard per batch status message.
+_BATCH_DASHBOARDS = {}
+
+
+def _dashboard_key(message):
+    chat_id = getattr(getattr(message, "chat", None), "id", None)
+    message_id = getattr(message, "id", getattr(message, "message_id", None))
+    return (chat_id, message_id)
+
+
+def _format_active_transfer(item):
+    title = str(item.get("title") or "Video")[:72]
+    current = max(0, int(item.get("current") or 0))
+    total = max(0, int(item.get("total") or 0))
+    now = time.monotonic()
+    previous_at = item.get("previous_at", now)
+    previous_bytes = item.get("previous_bytes", current)
+    elapsed = max(now - previous_at, 0.001)
+    speed = max(0, current - previous_bytes) / elapsed
+    item["previous_at"] = now
+    item["previous_bytes"] = current
+    percent = min(100, int(current * 100 / total)) if total else 0
+    eta = "—"
+    if total and speed > 0:
+        remaining = max(0, total - current) / speed
+        eta = f"{int(remaining // 60):02d}:{int(remaining % 60):02d}"
+    size = f"{current / (1024 * 1024):.1f}/{total / (1024 * 1024):.1f} MB" if total else f"{current / (1024 * 1024):.1f} MB"
+    return f"• {title} — {percent}% • {size} • {speed / (1024 * 1024):.2f} MB/s • ETA {eta}"
+
+
+async def _dashboard_refresh(status, force=False):
+    dashboard = _BATCH_DASHBOARDS.get(_dashboard_key(status))
+    if not dashboard:
+        return
+    downloads = list(dashboard["downloads"].values())
+    uploads = list(dashboard["uploads"].values())
+    lines = [
+        f"📊 BATCH • {dashboard['mode'].upper()}",
+        "",
+        f"⬇️ DOWNLOADING ({len(downloads)})",
+    ]
+    lines.extend(_format_active_transfer(item) for item in downloads[:4])
+    if len(downloads) > 4:
+        lines.append(f"• +{len(downloads) - 4} more downloads")
+    if not downloads:
+        lines.append("• None")
+    lines.extend(["", f"📤 UPLOADING ({len(uploads)})"])
+    lines.extend(_format_active_transfer(item) for item in uploads[:4])
+    if len(uploads) > 4:
+        lines.append(f"• +{len(uploads) - 4} more uploads")
+    if not uploads:
+        lines.append("• None")
+    active = len(downloads) + len(uploads)
+    queued = max(0, dashboard["total"] - dashboard["completed"] - dashboard["failed"] - active)
+    lines.extend([
+        "",
+        f"✅ Complete: {dashboard['completed']}/{dashboard['total']}  •  ⏳ Queue: {queued}",
+        f"⏭️ Skipped: {dashboard['skipped']}  •  ❌ Failed: {dashboard['failed']}",
+    ])
+    await _safe_edit(status, "\n".join(lines), force=force)
+
+
+async def _dashboard_start(status, phase, title):
+    dashboard = _BATCH_DASHBOARDS.get(_dashboard_key(status))
+    if not dashboard:
+        return False
+    item = {"title": title, "current": 0, "total": 0, "started": time.monotonic(),
+            "previous_at": time.monotonic(), "previous_bytes": 0}
+    dashboard["downloads" if phase == "download" else "uploads"][title] = item
+    await _dashboard_refresh(status)
+    return True
+
+
+async def _dashboard_progress(status, phase, title, current, total):
+    dashboard = _BATCH_DASHBOARDS.get(_dashboard_key(status))
+    if not dashboard:
+        return False
+    item = dashboard["downloads" if phase == "download" else "uploads"].get(title)
+    if item is None:
+        item = {"title": title, "current": 0, "total": 0, "started": time.monotonic(),
+                "previous_at": time.monotonic(), "previous_bytes": 0}
+        dashboard["downloads" if phase == "download" else "uploads"][title] = item
+    item["current"] = max(0, int(current or 0))
+    item["total"] = max(0, int(total or 0))
+    await _dashboard_refresh(status)
+    return True
+
+
+async def _dashboard_remove(status, title, phase=None):
+    dashboard = _BATCH_DASHBOARDS.get(_dashboard_key(status))
+    if not dashboard:
+        return False
+    phases = (phase,) if phase else ("download", "upload")
+    for name in phases:
+        dashboard["downloads" if name == "download" else "uploads"].pop(title, None)
+    await _dashboard_refresh(status, force=True)
+    return True
+
+
 def _download_progress(message, loop, title):
     state = {"time": 0.0, "started": time.monotonic()}
 
@@ -207,10 +306,14 @@ def _download_progress(message, loop, title):
         if now - state["time"] < PROGRESS_MIN_INTERVAL and current != total:
             return
         state["time"] = now
-        text = f"⬇️ DOWNLOADING\n🎬 {title[:180]}\n{_progress_details(current, total, state)}"
-        loop.call_soon_threadsafe(
-            lambda: asyncio.create_task(_safe_edit(message, text, force=(total > 0 and current >= total)))
-        )
+        def _publish():
+            async def _update():
+                handled = await _dashboard_progress(message, "download", title, current, total)
+                if not handled:
+                    text = f"⬇️ DOWNLOADING\n🎬 {title[:180]}\n{_progress_details(current, total, state)}"
+                    await _safe_edit(message, text, force=(total > 0 and current >= total))
+            asyncio.create_task(_update())
+        loop.call_soon_threadsafe(_publish)
 
     return callback
 
@@ -221,11 +324,13 @@ async def _upload_progress(current, total, message, title, state):
         return
     state["time"] = now
     state.setdefault("started", now)
-    await _safe_edit(
-        message,
-        f"📤 UPLOADING TO TELEGRAM\n🎬 {title[:180]}\n{_progress_details(current, total, state)}",
-        force=(total > 0 and current >= total),
-    )
+    handled = await _dashboard_progress(message, "upload", title, current, total)
+    if not handled:
+        await _safe_edit(
+            message,
+            f"📤 UPLOADING TO TELEGRAM\n🎬 {title[:180]}\n{_progress_details(current, total, state)}",
+            force=(total > 0 and current >= total),
+        )
 
 
 def _video_duration_seconds(path, fallback=None):
