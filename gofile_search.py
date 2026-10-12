@@ -23,7 +23,7 @@ def _english_title(title, fallback="Video"):
     title = _clean(title)
     if not title:
         return fallback
-    if not re.search(r"[\\u3040-\\u30ff\\u3400-\\u4dbf\\u4e00-\\u9fff\\uac00-\\ud7af]", title):
+    if not re.search(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]", title):
         return title
     try:
         response = requests.get(
@@ -36,7 +36,7 @@ def _english_title(title, fallback="Video"):
         payload = response.json()
         translated = _clean("".join(part[0] for part in payload[0] if part and part[0]))
         if translated and not re.search(
-            r"[\\u3040-\\u30ff\\u3400-\\u4dbf\\u4e00-\\u9fff\\uac00-\\ud7af]",
+            r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]",
             translated,
         ):
             return translated[:500]
