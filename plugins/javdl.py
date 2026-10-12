@@ -1,8 +1,10 @@
 import asyncio
+import json
 import logging
 import os
 import re
 import subprocess
+import threading
 import time
 from pathlib import Path
 from urllib.parse import urlparse
@@ -28,6 +30,58 @@ downloader = Downloader(workdir=Config.DOWNLOAD_LOCATION)
 pending = {}
 MAX_CHANNEL_PAGES = 50
 MAX_BATCH_VIDEOS = 200
+CHANNEL_HISTORY_PATH = Path("data") / "channel_uploads.json"
+_channel_history_lock = threading.Lock()
+
+
+def _canonical_video_url(url):
+    """Normalize URLs so query strings and trailing slashes don't create duplicates."""
+    parsed = urlparse(str(url or "").strip())
+    if not parsed.scheme or not parsed.netloc:
+        return str(url or "").strip()
+    return parsed._replace(
+        scheme=parsed.scheme.lower(),
+        netloc=parsed.netloc.lower(),
+        path=parsed.path.rstrip("/"),
+        params="",
+        query="",
+        fragment="",
+    ).geturl()
+
+
+def _load_channel_history():
+    """Load previously successful channel uploads."""
+    with _channel_history_lock:
+        try:
+            with CHANNEL_HISTORY_PATH.open("r", encoding="utf-8") as file:
+                data = json.load(file)
+            return data if isinstance(data, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+
+def _record_channel_upload(url, title):
+    """Save title and URL only after Telegram confirms a successful upload."""
+    key = _canonical_video_url(url)
+    with _channel_history_lock:
+        try:
+            with CHANNEL_HISTORY_PATH.open("r", encoding="utf-8") as file:
+                history = json.load(file)
+            if not isinstance(history, dict):
+                history = {}
+        except (OSError, json.JSONDecodeError):
+            history = {}
+
+        history[key] = {"url": url, "title": title}
+        CHANNEL_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = CHANNEL_HISTORY_PATH.with_suffix(".tmp")
+        with temporary_path.open("w", encoding="utf-8") as file:
+            json.dump(history, file, ensure_ascii=False, indent=2)
+        temporary_path.replace(CHANNEL_HISTORY_PATH)
+
+
+def _channel_video_is_uploaded(url):
+    return _canonical_video_url(url) in _load_channel_history()
 
 
 def _valid_url(value, route):
@@ -217,8 +271,12 @@ def _quality_keyboard(qualities):
     return InlineKeyboardMarkup(rows)
 
 
-def _channel_keyboard():
+def _channel_keyboard(skip_uploaded=True):
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            f"⏭️ Skip already uploaded: {'ON' if skip_uploaded else 'OFF'}",
+            callback_data="javdl|skip_toggle",
+        )],
         [InlineKeyboardButton("⬇️ Download first page", callback_data="javdl|page")],
         [InlineKeyboardButton("📥 Download all videos", callback_data="javdl|all")],
     ])
@@ -228,6 +286,8 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
     status = await message.reply_text("⏳ Starting channel download…")
     uploaded = failed = skipped = 0
     seen = set()
+    already_uploaded = 0
+    skip_uploaded = bool(state.get("skip_uploaded", True))
     try:
         total_pages = max(1, min(int(state.get("total_pages") or 1), MAX_CHANNEL_PAGES))
         pages = range(total_pages) if all_pages else range(1)
@@ -323,6 +383,7 @@ async def javtiful_channel_command(bot, message):
             "total_pages": total_pages,
             "total_videos": info.get("total_videos"),
             "first_page": {"items": info.get("first_page_items") or []},
+            "skip_uploaded": True,
         }
         pending[message.from_user.id] = state
         count = info.get("total_videos")
@@ -332,7 +393,7 @@ async def javtiful_channel_command(bot, message):
             f"📄 Pages: {total_pages}\n"
             f"📌 First-page entries: {len(state['first_page']['items'])}\n\n"
             "Choose what to process:",
-            reply_markup=_channel_keyboard(),
+            reply_markup=_channel_keyboard(state.get("skip_uploaded", True)),
         )
     except Exception as exc:
         logger.exception("JAVDL channel inspection failed")
@@ -400,6 +461,20 @@ async def javdl_callback(bot, query):
             logger.exception("JAVDL video download/upload failed")
             await _safe_edit(query.message, f"❌ Download/upload failed\n{type(exc).__name__}: {str(exc)[:700]}")
         return
+
+    if action[1] == "skip_toggle":
+        if state.get("type") != "channel":
+            return await query.answer("This listing selection has expired.", show_alert=True)
+        if state.get("processing"):
+            return await query.answer("A batch is already running.", show_alert=True)
+        state["skip_uploaded"] = not bool(state.get("skip_uploaded", True))
+        await query.answer(
+            "Already-uploaded videos will be skipped." if state["skip_uploaded"]
+            else "Already-uploaded videos will be downloaded again."
+        )
+        return await query.message.edit_reply_markup(
+            reply_markup=_channel_keyboard(state["skip_uploaded"])
+        )
 
     if action[1] in {"page", "all"}:
         if state.get("type") != "channel":
