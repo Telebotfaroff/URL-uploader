@@ -7,7 +7,7 @@ from plugins.settings.settings import OpenSettings
 from plugins.script import Translation
 from pyrogram import Client, filters, types
 from pyrogram import enums
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, LinkPreviewOptions
 from plugins.database.database import db
 import logging
 logging.basicConfig(level=logging.DEBUG,
