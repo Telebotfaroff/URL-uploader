@@ -60,19 +60,43 @@ async def _safe_edit(message, text):
         pass
 
 
+def _progress_details(current, total, state):
+    """Return a compact progress bar, transfer rate, and ETA."""
+    now = time.monotonic()
+    started = state.setdefault("started", now)
+    elapsed = max(now - started, 0.001)
+    speed = max(0, current) / elapsed
+    percent = min(100, int(current * 100 / total)) if total and total > 0 else None
+    if total and speed > 0:
+        remaining = max(0, total - current) / speed
+        eta = f"{int(remaining // 60):02d}:{int(remaining % 60):02d}"
+    else:
+        eta = "—"
+    if percent is None:
+        bar = "□□□□□□□□□□"
+        percent_text = "Progress unknown"
+    else:
+        filled = min(10, percent // 10)
+        bar = "▰" * filled + "▱" * (10 - filled)
+        percent_text = f"{percent}%"
+    current_mb = current / (1024 * 1024)
+    if total and total > 0:
+        size_text = f"{current_mb:.1f}/{total / (1024 * 1024):.1f} MB"
+    else:
+        size_text = f"{current_mb:.1f} MB received"
+    speed_mb = speed / (1024 * 1024)
+    return f"{bar} {percent_text}\n{size_text} • {speed_mb:.2f} MB/s • ETA {eta}"
+
+
 def _download_progress(message, loop, title):
-    last_update = {"time": 0.0}
+    state = {"time": 0.0, "started": time.monotonic()}
 
     def callback(current, total, stage):
         now = time.monotonic()
-        if now - last_update["time"] < 3 and current != total:
+        if now - state["time"] < 3 and current != total:
             return
-        last_update["time"] = now
-        if total:
-            percent = min(100, int(current * 100 / total))
-            text = f"⬇️ Downloading: {title}\n{percent}% ({current // (1024 * 1024)} / {total // (1024 * 1024)} MB)"
-        else:
-            text = f"⬇️ Downloading: {title}\n{current // (1024 * 1024)} MB received"
+        state["time"] = now
+        text = f"⬇️ Downloading: {title}\n{_progress_details(current, total, state)}"
         loop.call_soon_threadsafe(
             lambda: asyncio.create_task(_safe_edit(message, text))
         )
@@ -85,10 +109,10 @@ async def _upload_progress(current, total, message, title, state):
     if now - state["time"] < 3 and current != total:
         return
     state["time"] = now
-    percent = min(100, int(current * 100 / total)) if total else 0
+    state.setdefault("started", now)
     await _safe_edit(
         message,
-        f"📤 Uploading: {title}\n{percent}% ({current // (1024 * 1024)} / {total // (1024 * 1024)} MB)",
+        f"📤 Uploading: {title}\n{_progress_details(current, total, state)}",
     )
 
 
