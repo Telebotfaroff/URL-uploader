@@ -125,8 +125,8 @@ async def search_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     code = (update.effective_message.text or "").strip()
     if code.startswith("/"):
         return
-    if not re.fullmatch(r"[A-Za-z0-9]{2,10}[-_ ]?\d{2,8}(?:[-_][A-Za-z0-9]{1,8})?", code):
-        await update.effective_message.reply_text("Send a video code such as STAR-765.")
+    if not re.fullmatch(r"[A-Za-z]{2,10}(?:[-_ ]?\d{2,8}(?:[-_][A-Za-z0-9]{1,8})?)?", code):
+        await update.effective_message.reply_text("Send a video code such as STAR-765 or a code prefix such as IPZZ.")
         return
     status = await update.effective_message.reply_text(f"🔎 Searching Javtiful for {html.escape(code.upper())}…")
     try:
