@@ -127,7 +127,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.effective_message.reply_text(
         "🔎 Send a Javtiful video code (example: STAR-765).\n"
-        "I'll show matching results with thumbnails, navigation, and a GoFile guest-upload button."
+        "I'll show matching results with thumbnails, navigation, a DL button for GoFile, and an SS button for screenshots."
     )
 
 
