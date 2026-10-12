@@ -1,3 +1,4 @@
+import asyncio
 import os
 from os import environ, getenv
 import logging
@@ -50,3 +51,26 @@ class Config(object):
 
 
     
+
+
+# Upload-only Pyrogram client pool. Each client gets its own lock so one
+# session uploads one video at a time; the same bot identity is used.
+_UPLOAD_CLIENTS = []
+_UPLOAD_CLIENT_LOCKS = {}
+_UPLOAD_CLIENT_INDEX = 0
+
+
+def configure_upload_clients(clients):
+    global _UPLOAD_CLIENTS, _UPLOAD_CLIENT_LOCKS, _UPLOAD_CLIENT_INDEX
+    _UPLOAD_CLIENTS = list(clients or [])
+    _UPLOAD_CLIENT_LOCKS = {}
+    _UPLOAD_CLIENT_INDEX = 0
+
+
+def get_upload_session(fallback_client):
+    global _UPLOAD_CLIENT_INDEX
+    clients = _UPLOAD_CLIENTS or [fallback_client]
+    client = clients[_UPLOAD_CLIENT_INDEX % len(clients)]
+    _UPLOAD_CLIENT_INDEX += 1
+    lock = _UPLOAD_CLIENT_LOCKS.setdefault(id(client), asyncio.Lock())
+    return client, lock
