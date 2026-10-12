@@ -128,7 +128,7 @@ _chat_edit_at = {}
 _chat_edit_locks = {}
 
 
-async def _safe_edit(message, text, force=None):
+async def _safe_edit(message, text, force=None, **edit_kwargs):
     """Edit status messages without flooding Telegram; prioritize final states."""
     chat_id = getattr(getattr(message, "chat", None), "id", None)
     message_id = getattr(message, "id", getattr(message, "message_id", None))
@@ -156,11 +156,11 @@ async def _safe_edit(message, text, force=None):
                     await asyncio.sleep(wait)
 
             try:
-                await message.edit_text(text)
+                await message.edit_text(text, **edit_kwargs)
             except Exception as exc:
                 if exc.__class__.__name__ == "FloodWait":
                     await asyncio.sleep(max(1, int(getattr(exc, "value", 1))))
-                    await message.edit_text(text)
+                    await message.edit_text(text, **edit_kwargs)
                 else:
                     raise
             now = time.monotonic()
