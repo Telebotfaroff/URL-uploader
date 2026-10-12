@@ -290,7 +290,7 @@ async def _dashboard_remove(status, title, phase=None):
     phases = (phase,) if phase else ("download", "upload")
     for name in phases:
         dashboard["downloads" if name == "download" else "uploads"].pop(title, None)
-    await _dashboard_refresh(status, force=True)
+    await _dashboard_refresh(status)
     return True
 
 
@@ -589,6 +589,7 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
                             if attempt >= 3:
                                 raise
                             if _dashboard_key(status) not in _BATCH_DASHBOARDS:
+                                if _dashboard_key(status) not in _BATCH_DASHBOARDS:
                                 await _safe_edit(status, f"🔁 RETRY {attempt}/2\n🎬 {title[:180]}")
                             await asyncio.sleep(attempt * 2)
                     try:
