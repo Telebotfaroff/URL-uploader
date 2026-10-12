@@ -109,7 +109,8 @@ def search_videos(code, max_pages=5, max_results=50):
     all_results = []
     seen = set()
     pages_to_check = 1
-    for page in range(1, min(max_pages, pages_to_check) + 1):
+    page = 1
+    while page <= min(max_pages, pages_to_check):
         url = _page_url(code, page)
         response = session.get(url, timeout=25)
         response.raise_for_status()
@@ -125,6 +126,7 @@ def search_videos(code, max_pages=5, max_results=50):
                     return all_results
         if not items:
             break
-        if page < pages_to_check:
+        page += 1
+        if page <= min(max_pages, pages_to_check):
             time.sleep(0.25)
     return all_results
