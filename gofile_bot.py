@@ -60,10 +60,10 @@ def _parallel_keyboard():
 
 def _parallel_settings_text():
     return (
-        "⚙️ <b>Bulk parallel settings</b>\\n"
-        f"⬇️ Download workers: <b>{PARALLEL_SETTINGS['downloads']}</b> (1–5)\\n"
-        f"☁️ Upload workers: <b>{PARALLEL_SETTINGS['uploads']}</b> (1–3)\\n"
-        f"📸 Screenshot workers: <b>{PARALLEL_SETTINGS['screenshots']}</b> (1–2)\\n\\n"
+        "⚙️ <b>Bulk parallel settings</b>\n"
+        f"⬇️ Download workers: <b>{PARALLEL_SETTINGS['downloads']}</b> (1–5)\n"
+        f"☁️ Upload workers: <b>{PARALLEL_SETTINGS['uploads']}</b> (1–3)\n"
+        f"📸 Screenshot workers: <b>{PARALLEL_SETTINGS['screenshots']}</b> (1–2)\n\n"
         "Changes apply to the next bulk batch. Active video jobs are capped at the download-worker setting to limit temporary storage."
     )
 
@@ -827,7 +827,7 @@ async def run_bulk_jobs(query, batch, mode, screenshot_count, destination="chat"
                     result_lines.append(f"🔗 GoFile: <code>{html.escape(gofile_link)}</code>")
                 if screenshots:
                     result_lines.append(f"📸 Screenshots: {len(screenshots)}")
-                await query.message.reply_text("\\n".join(result_lines), parse_mode="HTML")
+                await query.message.reply_text("\n".join(result_lines), parse_mode="HTML")
 
                 if screenshots:
                     destination_chat_id = SCREENSHOT_CHANNEL_ID if destination == "channel" else query.message.chat_id
@@ -865,7 +865,7 @@ async def run_bulk_jobs(query, batch, mode, screenshot_count, destination="chat"
                     done = finished_count
                     try:
                         await status.edit_text(
-                            f"⏳ Bulk progress: {done}/{total} finished\\n"
+                            f"⏳ Bulk progress: {done}/{total} finished\n"
                             f"⬇️ Downloads: {settings['downloads']} • 📸 Screenshots: {settings['screenshots']} • ☁️ Uploads: {settings['uploads']}"
                         )
                     except Exception:
@@ -883,7 +883,7 @@ async def run_bulk_jobs(query, batch, mode, screenshot_count, destination="chat"
         summary.append("Failures: " + ", ".join(
             f"{html.escape(code)} ({html.escape(reason)})" for code, reason in failed[:10]
         ))
-    await status.edit_text("\\n".join(summary), parse_mode="HTML")
+    await status.edit_text("\n".join(summary), parse_mode="HTML")
 
 async def unknown_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_owner(update):
