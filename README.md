@@ -6,7 +6,7 @@ Telegram bot for uploading files from URLs.
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Telebotfaroff/URL-uploader/blob/main/URL_Uploader_Colab.ipynb)
 
-Open the notebook above, add your credentials in **Colab Secrets**, and run the cells from top to bottom.
+**Always use the notebook linked above** to get the latest version from the repository’s `main` branch. If you already have an older copy open in Colab, reopen this link or refresh the page before running it. Then add your credentials in **Colab Secrets** and run Cell 1 → Cell 2 → Cell 3 in order.
 
 Required Colab Secrets:
 
