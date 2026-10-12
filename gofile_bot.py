@@ -34,6 +34,8 @@ except ValueError:
 
 PAGE_SIZE = 1
 MAX_SEARCHES_PER_OWNER = 10
+MAX_BULK_CODES = 100
+BULK_SEARCH_WORKERS = 5
 SEARCHES = {}
 BULK_JOBS = {}
 ACTIVE_DOWNLOADS = set()
@@ -212,7 +214,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.effective_message.reply_text(
         "🔎 Send a Javtiful video code (example: STAR-765).\n"
-        "I'll show matching results with thumbnails, navigation, a DL button for GoFile, and an SS button for screenshots.\n\nFor bulk mode, send up to 20 video codes separated by new lines, commas, or semicolons. Then choose Download all, Screenshots all, or Download + Screenshots all. Use /parallel to configure bulk worker counts."
+        "I'll show matching results with thumbnails, navigation, a DL button for GoFile, and an SS button for screenshots.\n\nFor bulk mode, send up to 100 video codes separated by new lines, commas, or semicolons. Then choose Download all, Screenshots all, or Download + Screenshots all. Use /parallel to configure bulk worker counts."
     )
 
 
@@ -258,8 +260,8 @@ async def search_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if re.search(r"[,;\n\r]", code):
         raw_codes = [part.strip() for part in re.split(r"[,;\n\r]+", code) if part.strip()]
         if len(raw_codes) > 1:
-            if len(raw_codes) > 20:
-                await update.effective_message.reply_text("Bulk mode supports up to 20 video codes per batch.")
+            if len(raw_codes) > MAX_BULK_CODES:
+                await update.effective_message.reply_text(f"Bulk mode supports up to {MAX_BULK_CODES} video codes per batch. Split your list into smaller batches.")
                 return
             code_pattern = re.compile(r"[A-Za-z]{2,10}(?:[-_ ]?\d{2,8}(?:[-_][A-Za-z0-9]{1,8})?)?")
             invalid = [value for value in raw_codes if not code_pattern.fullmatch(value)]
@@ -666,40 +668,57 @@ def _bulk_quantity_keyboard(bulk_id, mode):
 
 
 async def start_bulk_search(update, codes):
-    status = await update.effective_message.reply_text(f"🔎 Searching {len(codes)} video codes one by one…")
-    results, missing = [], []
-    for code in codes:
-        try:
-            matches = await asyncio.to_thread(search_videos, code)
-            if not matches:
-                missing.append(code.upper())
-                continue
-            wanted = re.sub(r"[-_ ]+", "-", code).upper()
-            item = next((entry for entry in matches if re.sub(r"[-_ ]+", "-", str(entry.get("code") or "")).upper() == wanted), matches[0])
-            results.append({"requested_code": code.upper(), "item": item})
-        except Exception as exc:
-            LOGGER.warning("Bulk search failed for %s: %s", code, str(exc)[:200])
-            missing.append(code.upper())
+    status = await update.effective_message.reply_text(
+        f"🔎 Searching {len(codes)} video codes (up to {BULK_SEARCH_WORKERS} searches at once)…"
+    )
+    search_limit = asyncio.Semaphore(BULK_SEARCH_WORKERS)
+
+    async def lookup(code):
+        async with search_limit:
+            try:
+                matches = await asyncio.to_thread(search_videos, code)
+                if not matches:
+                    return None, code.upper()
+                wanted = re.sub(r"[-_ ]+", "-", code).upper()
+                item = next(
+                    (entry for entry in matches if re.sub(r"[-_ ]+", "-", str(entry.get("code") or "")).upper() == wanted),
+                    matches[0],
+                )
+                return {"requested_code": code.upper(), "item": item}, None
+            except Exception as exc:
+                LOGGER.warning("Bulk search failed for %s: %s", code, str(exc)[:200])
+                return None, code.upper()
+
+    # gather preserves input order even when searches finish in a different order.
+    lookup_results = await asyncio.gather(*(lookup(code) for code in codes))
+    results = [row for row, missing_code in lookup_results if row is not None]
+    missing = [missing_code for row, missing_code in lookup_results if missing_code is not None]
     if not results:
         await status.edit_text("❌ No videos were found for any supplied code.")
         return
+
     bulk_id = uuid.uuid4().hex[:8]
     BULK_JOBS[bulk_id] = {"owner_id": OWNER_ID, "results": results, "created": time.monotonic()}
     while len(BULK_JOBS) > 5:
         oldest = min(BULK_JOBS, key=lambda key: BULK_JOBS[key]["created"])
         BULK_JOBS.pop(oldest, None)
+
     lines = [
         "📚 <b>Bulk batch ready</b>",
         f"Found: {len(results)}/{len(codes)} video(s)",
         "Choose one action for every found video. Use /parallel to configure worker counts.",
         "",
+        "<b>Found codes:</b>",
     ]
-    for row in results:
-        lines.append(f"• <code>{html.escape(row['requested_code'])}</code> — {html.escape((row['item'].get('title') or 'Video')[:100])}")
+    # Keep the Telegram summary compact even for a 100-code batch.
+    lines.extend(f"• <code>{html.escape(row['requested_code'])}</code>" for row in results)
     if missing:
-        lines.extend(["", "Not found: " + ", ".join(html.escape(code) for code in missing)])
+        preview = missing[:20]
+        missing_text = ", ".join(html.escape(code) for code in preview)
+        if len(missing) > len(preview):
+            missing_text += f", … and {len(missing) - len(preview)} more"
+        lines.extend(["", f"<b>Not found ({len(missing)}):</b> {missing_text}"])
     await status.edit_text("\n".join(lines), parse_mode="HTML", reply_markup=_bulk_keyboard(bulk_id))
-
 
 async def bulk_action_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
