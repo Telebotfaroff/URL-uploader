@@ -2,6 +2,7 @@ import logging
 import asyncio
 import json
 import os
+import re
 import shutil
 import time
 from datetime import datetime
@@ -79,8 +80,7 @@ async def youtube_dl_call_back(bot, update):
         if youtube_dl_password:
             youtube_dl_password = youtube_dl_password.strip()
 
-        logger.info(youtube_dl_url)
-        logger.info(custom_file_name)
+        logger.info("Preparing yt-dlp download; URL and credentials omitted from logs")
     else:
         for entity in update.message.reply_to_message.entities:
             if entity.type == "text_link":
@@ -89,6 +89,9 @@ async def youtube_dl_call_back(bot, update):
                 o = entity.offset
                 l = entity.length
                 youtube_dl_url = youtube_dl_url[o:o + l]
+
+    custom_file_name = os.path.basename(str(custom_file_name).replace("\\\\", "/").strip())
+    custom_file_name = re.sub(r"[\\x00-\\x1f]", "_", custom_file_name) or "download.bin"
 
     await update.message.edit_caption(
         caption=Translation.DOWNLOAD_START.format(custom_file_name)
@@ -146,7 +149,7 @@ async def youtube_dl_call_back(bot, update):
 
     command_to_exec.append("--no-warnings")
 
-    logger.info(command_to_exec)
+    logger.info("Starting yt-dlp download (type=%s, format=%s); sensitive arguments redacted", tg_send_type, youtube_dl_format)
     start = datetime.now()
 
     process = await asyncio.create_subprocess_exec(
