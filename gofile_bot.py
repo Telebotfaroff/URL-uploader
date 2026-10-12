@@ -364,25 +364,20 @@ async def screenshot_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             extract_screenshots, str(path), temp_dir, count, video.duration
         )
 
-        title = html.escape(item.get("title") or item.get("code") or "Video")
+        # Put the video code in every screenshot caption, including each album.
+        video_code = html.escape(item.get("code") or "Unknown")
         # Telegram albums accept at most 10 photos per message group.
         for start in range(0, len(screenshots), 10):
             batch = screenshots[start:start + 10]
             opened_files = []
             try:
                 media = []
-                for offset, screenshot in enumerate(batch):
+                for screenshot in batch:
                     handle = screenshot.open("rb")
                     opened_files.append(handle)
-                    absolute_index = start + offset + 1
-                    caption = None
-                    if absolute_index == 1:
-                        caption = (
-                            f"📸 <b>{title}</b>\n"
-                            f"Screenshots: {count} • Quality source: {html.escape(str(quality))}"
-                        )
                     media.append(InputMediaPhoto(
-                        media=handle, caption=caption, parse_mode="HTML" if caption else None
+                        media=handle,
+                        caption=video_code,
                     ))
                 await query.message.reply_media_group(media=media)
             finally:
