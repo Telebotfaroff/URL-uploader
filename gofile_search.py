@@ -87,7 +87,15 @@ def _parse_page(html, page_url):
             "code": code,
         })
 
-    max_page = page
+    # Infer the current page from the URL (page 1 has no page parameter).
+    try:
+        current_page = int(parse_qs(urlparse(page_url).query).get("page", ["1"])[0])
+        if current_page < 1:
+            current_page = 1
+    except (TypeError, ValueError):
+        current_page = 1
+
+    max_page = current_page
     for link in soup.select("a[href*='page='], .front-pagination a, .pagination a"):
         href = link.get("href") or ""
         match = re.search(r"[?&]page=(\d+)", href, re.I)
