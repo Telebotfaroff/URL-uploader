@@ -4,9 +4,23 @@ from pathlib import Path
 
 from gofile_media import _safe_name, extract_screenshots
 from gofile_search import _parse_page
+from gofile_bot import _screenshot_quantity_keyboard, _combined_quantity_keyboard, _bulk_quantity_keyboard
 
 
 class GofileSearchTests(unittest.TestCase):
+    def test_screenshot_keyboards_offer_private_channel_destination(self):
+        for keyboard in (
+            _screenshot_quantity_keyboard("abc12345", 0),
+            _combined_quantity_keyboard("abc12345", 0),
+            _bulk_quantity_keyboard("abc12345", "ss"),
+        ):
+            callback_data = [
+                button.callback_data
+                for row in keyboard.inline_keyboard
+                for button in row
+            ]
+            self.assertTrue(any(value.endswith(":channel") for value in callback_data))
+            self.assertTrue(any(value.endswith(":chat") for value in callback_data))
     def test_parse_video_card(self):
         html = """
         <html><body>
