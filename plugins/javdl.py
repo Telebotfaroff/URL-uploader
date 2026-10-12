@@ -588,7 +588,8 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
                         except Exception:
                             if attempt >= 3:
                                 raise
-                            await _safe_edit(status, f"🔁 RETRY {attempt}/2\n🎬 {title[:180]}")
+                            if _dashboard_key(status) not in _BATCH_DASHBOARDS:
+                                await _safe_edit(status, f"🔁 RETRY {attempt}/2\n🎬 {title[:180]}")
                             await asyncio.sleep(attempt * 2)
                     try:
                         await db.record_channel_upload(_canonical_video_url(url), url, uploaded_title or title)
