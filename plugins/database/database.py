@@ -69,6 +69,14 @@ class Database:
                             caption TEXT
                         )
                     """)
+                    await conn.execute("""
+                        CREATE TABLE IF NOT EXISTS channel_upload_history (
+                            canonical_url TEXT PRIMARY KEY,
+                            original_url TEXT NOT NULL,
+                            title TEXT NOT NULL,
+                            uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                    """)
                 self._schema_ready = True
         return pool
 
@@ -165,6 +173,29 @@ class Database:
         pool = await self._ensure_schema()
         row = await pool.fetchrow("SELECT * FROM users WHERE id = $1", int(id))
         return dict(row) if row else None
+
+    async def is_channel_video_uploaded(self, canonical_url):
+        pool = await self._ensure_schema()
+        return bool(await pool.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM channel_upload_history WHERE canonical_url = $1)",
+            str(canonical_url),
+        ))
+
+    async def record_channel_upload(self, canonical_url, original_url, title):
+        pool = await self._ensure_schema()
+        await pool.execute(
+            """
+            INSERT INTO channel_upload_history (canonical_url, original_url, title)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (canonical_url) DO UPDATE
+            SET original_url = EXCLUDED.original_url,
+                title = EXCLUDED.title,
+                uploaded_at = NOW()
+            """,
+            str(canonical_url),
+            str(original_url),
+            str(title or "Video"),
+        )
 
     async def close(self):
         if self._pool is not None:
