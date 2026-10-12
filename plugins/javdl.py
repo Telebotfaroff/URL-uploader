@@ -6,7 +6,7 @@ import re
 import subprocess
 import time
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import requests
 from io import BytesIO
@@ -28,6 +28,7 @@ downloader = Downloader(workdir=Config.DOWNLOAD_LOCATION)
 
 # Per-user interaction state for inline quality/channel choices.
 pending = {}
+active_saved_batches = set()
 MAX_CHANNEL_PAGES = 50
 MAX_BATCH_VIDEOS = 200
 def _canonical_video_url(url):
@@ -56,6 +57,51 @@ def _valid_url(value, route):
         and parsed.path.startswith(route)
     )
 
+
+
+def _load_saved_channel_urls_sync():
+    """Load Javtiful channel URLs from text-like files under this repository's data/ folder."""
+    api_url = "https://api.github.com/repos/Telebotfaroff/URL-uploader/git/trees/main?recursive=1"
+    response = requests.get(api_url, timeout=20, headers={"User-Agent": "URL-Uploader-Bot"})
+    response.raise_for_status()
+    tree = response.json().get("tree", [])
+    candidates = [
+        item for item in tree
+        if item.get("type") == "blob"
+        and item.get("path", "").startswith("data/")
+        and int(item.get("size") or 0) <= 2 * 1024 * 1024
+    ]
+    found = []
+    seen = set()
+    pattern = re.compile(
+        r"(?:https?://)?(?:www\\.)?javtiful\\.com/channel/[^\\s<>\\\"'\x60]+",
+        re.IGNORECASE,
+    )
+    for item in candidates:
+        path = item.get("path", "")
+        # Ignore likely binary assets; URL lists are expected to be text-like files.
+        if Path(path).suffix.lower() in {
+            ".png", ".jpg", ".jpeg", ".webp", ".gif", ".pdf", ".zip", ".mp4", ".mkv"
+        }:
+            continue
+        raw_url = "https://raw.githubusercontent.com/Telebotfaroff/URL-uploader/main/" + quote(path, safe="/")
+        try:
+            file_response = requests.get(raw_url, timeout=15, headers={"User-Agent": "URL-Uploader-Bot"})
+            file_response.raise_for_status()
+            content = file_response.content.decode("utf-8", errors="ignore")
+        except Exception:
+            logger.warning("Could not read saved channel list file: %s", path, exc_info=True)
+            continue
+        for match in pattern.findall(content):
+            url = match.rstrip(".,;:!?)\\]}\\u2019\\u201d")
+            if not url.lower().startswith(("http://", "https://")):
+                url = "https://" + url
+            if _valid_url(url, "/channel/"):
+                canonical = _canonical_video_url(url)
+                if canonical not in seen:
+                    seen.add(canonical)
+                    found.append(url)
+    return found
 
 def _duration_text(value):
     if not value:
@@ -409,6 +455,82 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
     except Exception as exc:
         await _safe_edit(status, f"❌ Channel processing failed\n{type(exc).__name__}: {str(exc)[:700]}")
     finally:
+        pending.pop(user_id, None)
+
+
+@Client.on_message(filters.private & filters.command(["channels"], ["/", "."]))
+async def saved_channels_command(bot, message):
+    """Process the repository's saved channel URLs sequentially, one channel at a time."""
+    if not message.from_user:
+        return
+    user_id = message.from_user.id
+    if user_id in active_saved_batches:
+        return await message.reply_text("⏳ Your saved-channel batch is already running.")
+    active_saved_batches.add(user_id)
+    status = await message.reply_text("🔎 Reading saved channel URLs from GitHub…")
+    errors = []
+    completed = 0
+    try:
+        try:
+            urls = await asyncio.to_thread(_load_saved_channel_urls_sync)
+        except Exception as exc:
+            logger.exception("Could not load saved channel URLs from GitHub")
+            return await _safe_edit(
+                status,
+                f"❌ Could not read the data/ folder from GitHub.\\n{type(exc).__name__}: {str(exc)[:500]}",
+            )
+        if not urls:
+            return await _safe_edit(
+                status,
+                "ℹ️ No Javtiful /channel/ URLs were found in text files inside the repository's data/ folder.",
+            )
+        await _safe_edit(
+            status,
+            f"📚 Found {len(urls)} saved channel URL(s).\\n"
+            "🔒 Processing strictly one channel at a time; each channel will finish before the next starts.",
+        )
+        for index, url in enumerate(urls, start=1):
+            await _safe_edit(status, f"📺 Channel {index}/{len(urls)}\\n🔎 Inspecting: {url}")
+            try:
+                info = await asyncio.to_thread(channel_extractor.inspect, url)
+                state = {
+                    "type": "channel",
+                    "listing_type": "channel",
+                    "speed": "balanced",
+                    "url": url,
+                    "channel_name": info.get("channel_name") or f"Channel {index}",
+                    "total_pages": max(1, int(info.get("total_pages") or 1)),
+                    "total_videos": info.get("total_videos"),
+                    "first_page": {"items": info.get("first_page_items") or []},
+                    "skip_uploaded": True,
+                }
+                pending[user_id] = state
+                await _safe_edit(
+                    status,
+                    f"▶️ Processing channel {index}/{len(urls)}\\n"
+                    f"📺 {state['channel_name']}\\n"
+                    "⏭️ Already-uploaded videos will be skipped.",
+                )
+                await _process_channel(bot, status, state, user_id, all_pages=True)
+                completed += 1
+            except Exception as exc:
+                errors.append((url, f"{type(exc).__name__}: {str(exc)[:180]}"))
+                logger.exception("Saved channel failed: %s", url)
+                await _safe_edit(status, f"⚠️ Channel {index}/{len(urls)} failed; moving to the next one.\\n{str(exc)[:250]}")
+        summary = (
+            f"🏁 Saved-channel batch finished\\n\\n"
+            f"📚 Total saved channels: {len(urls)}\\n"
+            f"✅ Channels processed: {completed}\\n"
+            f"⚠️ Channels with inspection errors: {len(errors)}\\n\\n"
+            "Only one channel was processed at a time. Re-run /channels to retry; upload history will skip videos already uploaded."
+        )
+        if errors:
+            summary += "\\n\\nFailed to inspect:\\n" + "\\n".join(
+                f"• {url}" for url, _ in errors[:8]
+            )
+        await _safe_edit(status, summary)
+    finally:
+        active_saved_batches.discard(user_id)
         pending.pop(user_id, None)
 
 @Client.on_message(filters.private & filters.command(["resume"], ["/", "."]))
