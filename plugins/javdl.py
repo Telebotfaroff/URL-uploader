@@ -244,9 +244,15 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
                     continue
                 seen.add(url)
                 title = item.get("title") or "Video"
+                if skip_uploaded and _channel_video_is_uploaded(url):
+                    already_uploaded += 1
+                    skipped += 1
+                    await _safe_edit(status, f"⏭️ Already uploaded, skipping\n\n{title}\n{url}")
+                    continue
                 try:
                     await status.edit_text(f"🎬 Channel: {state.get('channel_name', 'Channel')}\nVideo {uploaded + failed + skipped + 1}\n\n{title}")
-                    await _download_and_upload(bot, message.chat.id, url, "best", status, caption=title)
+                    uploaded_title = await _download_and_upload(bot, message.chat.id, url, "best", status, caption=title)
+                    _record_channel_upload(url, uploaded_title or title)
                     uploaded += 1
                 except Exception as exc:
                     failed += 1
@@ -257,7 +263,7 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
         await status.edit_text(
             f"🏁 Channel processing finished\n\n"
             f"📺 {state.get('channel_name', 'Channel')}\n"
-            f"✅ Uploaded: {uploaded}\n⏭️ Skipped: {skipped}\n❌ Failed: {failed}\n"
+            f"✅ Uploaded: {uploaded}\n⏭️ Skipped: {skipped} (already uploaded: {already_uploaded})\n❌ Failed: {failed}\n"
             f"Pages scanned: {min(total_pages, len(pages) if hasattr(pages, '__len__') else total_pages)}"
         )
     except Exception as exc:
