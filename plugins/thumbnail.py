@@ -89,26 +89,40 @@ async def viewthumbnail(bot, update):
         await update.reply_text(text=f"𝙽𝙾 𝚃𝙷𝚄𝙼𝙱𝙽𝙰𝙸𝙻 😐")
 
 
+def _normalize_thumbnail(path):
+    """Convert a custom thumbnail to JPEG and resize it without distorting it."""
+    if not path:
+        return None
+    try:
+        with Image.open(path) as image:
+            image = image.convert("RGB")
+            image.thumbnail((320, 320))
+            image.save(path, "JPEG", quality=90, optimize=True)
+        return path
+    except (OSError, ValueError):
+        logger.warning("Invalid custom thumbnail; falling back to Telegram's default", exc_info=True)
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return None
+
+
 async def Gthumb01(bot, update):
     thumb_image_path = f"{Config.DOWNLOAD_LOCATION}/{str(update.from_user.id)}.jpg"
     db_thumbnail = await db.get_thumbnail(update.from_user.id)
     if db_thumbnail is not None:
         thumbnail = await bot.download_media(message=db_thumbnail, file_name=thumb_image_path)
-        Image.open(thumbnail).convert("RGB").save(thumbnail)
-        img = Image.open(thumbnail)
-        img.resize((100, 100))
-        img.save(thumbnail, "JPEG")
-    else:
-        thumbnail = None
-
-    return thumbnail
+        return _normalize_thumbnail(thumbnail)
+    return None
 
 async def Gthumb02(bot, update, duration, download_directory):
     thumb_image_path = f"{Config.DOWNLOAD_LOCATION}/{str(update.from_user.id)}.jpg"
     db_thumbnail = await db.get_thumbnail(update.from_user.id)
     
     if db_thumbnail is not None:
-        return await bot.download_media(message=db_thumbnail, file_name=thumb_image_path)
+        thumbnail = await bot.download_media(message=db_thumbnail, file_name=thumb_image_path)
+        return _normalize_thumbnail(thumbnail)
     elif duration > 1:
         return await take_screen_shot(download_directory, os.path.dirname(download_directory), random.randint(0, duration - 1))
     else:
