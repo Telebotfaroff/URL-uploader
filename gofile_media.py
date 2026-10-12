@@ -44,23 +44,36 @@ def download_video(video_url, download_dir, progress_callback):
             "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
             "-headers", "".join(f"{k}: {v}\r\n" for k, v in headers.items()),
             "-i", media_url, "-map", "0:v:0", "-map", "0:a:0?",
-            "-c", "copy", "-bsf:a", "aac_adtstoasc", str(path),
+            "-c", "copy", "-bsf:a", "aac_adtstoasc",
+            "-progress", "pipe:1", "-nostats", str(path),
         ]
-        process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        duration = max(0.0, float(video.duration or 0))
+        process = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            text=True, bufsize=1,
+        )
         try:
-            while process.poll() is None:
-                size = path.stat().st_size if path.exists() else 0
-                progress_callback(size, 0)
-                time.sleep(1.5)
+            for line in process.stdout:
+                if line.startswith("out_time_ms=") and duration > 0:
+                    try:
+                        elapsed_seconds = int(line.split("=", 1)[1]) / 1_000_000
+                    except ValueError:
+                        continue
+                    progress_callback(min(elapsed_seconds, duration), duration, "time")
+            process.wait(timeout=900)
             if process.returncode:
-                stderr = process.stderr.read().decode("utf-8", "replace")[-1200:]
-                raise RuntimeError("FFmpeg could not download this stream: " + stderr)
+                raise RuntimeError(f"FFmpeg could not download this stream (exit code {process.returncode}).")
+        except subprocess.TimeoutExpired as exc:
+            process.kill()
+            process.wait()
+            path.unlink(missing_ok=True)
+            raise RuntimeError("FFmpeg download timed out after 900 seconds.") from exc
         finally:
             if process.poll() is None:
                 process.kill()
                 process.wait()
-            if process.stderr:
-                process.stderr.close()
+            if process.stdout:
+                process.stdout.close()
     else:
         last_error = None
         for attempt in range(2):
