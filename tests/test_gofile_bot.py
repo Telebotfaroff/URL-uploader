@@ -1,7 +1,11 @@
 import unittest
+import tempfile
+from pathlib import Path
+from unittest.mock import Mock, patch
 
 from gofile_media import _safe_name, extract_screenshots
 from gofile_search import _parse_page
+from gofile_image_host import upload_images
 
 
 class GofileSearchTests(unittest.TestCase):
@@ -38,6 +42,33 @@ class GofileSearchTests(unittest.TestCase):
         items, max_page = _parse_page("<html><body>Nothing</body></html>", "https://javtiful.com/")
         self.assertEqual(items, [])
         self.assertEqual(max_page, 1)
+
+
+    @patch("gofile_image_host.requests.post")
+    def test_freeimage_upload_returns_gallery_links(self, mock_post):
+        mock_post.return_value = Mock(
+            status_code=200,
+            json=lambda: {
+                "status_code": 200,
+                "success": {"code": 200, "message": "image uploaded"},
+                "image": {
+                    "url": "https://freeimage.host/images/test.jpg",
+                    "url_viewer": "https://freeimage.host/image/test",
+                },
+            },
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            image = Path(directory) / "test.jpg"
+            image.write_bytes(b"fake-jpeg")
+            result = upload_images([image], api_key="test-key")
+        self.assertEqual(result[0]["url"], "https://freeimage.host/images/test.jpg")
+        self.assertEqual(result[0]["viewer_url"], "https://freeimage.host/image/test")
+        self.assertEqual(mock_post.call_args.kwargs["data"]["action"], "upload")
+
+    def test_freeimage_upload_requires_api_key(self):
+        with patch.dict("os.environ", {"FREEIMAGE_API_KEY": ""}):
+            with self.assertRaisesRegex(RuntimeError, "FREEIMAGE_API_KEY"):
+                upload_images([])
 
 
 if __name__ == "__main__":
