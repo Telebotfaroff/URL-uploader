@@ -1,10 +1,8 @@
 import asyncio
-import json
 import logging
 import os
 import re
 import subprocess
-import threading
 import time
 from pathlib import Path
 from urllib.parse import urlparse
@@ -16,6 +14,7 @@ from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from plugins.config import Config
+from plugins.database.database import db
 from plugins.javdl_core.channel import JavtifulChannelExtractor
 from plugins.javdl_core.downloader import Downloader
 from plugins.javdl_core.extractor_javtiful import JavtifulExtractor
@@ -30,10 +29,6 @@ downloader = Downloader(workdir=Config.DOWNLOAD_LOCATION)
 pending = {}
 MAX_CHANNEL_PAGES = 50
 MAX_BATCH_VIDEOS = 200
-CHANNEL_HISTORY_PATH = Path("data") / "channel_uploads.json"
-_channel_history_lock = threading.Lock()
-
-
 def _canonical_video_url(url):
     """Normalize URLs so query strings and trailing slashes don't create duplicates."""
     parsed = urlparse(str(url or "").strip())
@@ -47,41 +42,6 @@ def _canonical_video_url(url):
         query="",
         fragment="",
     ).geturl()
-
-
-def _load_channel_history():
-    """Load previously successful channel uploads."""
-    with _channel_history_lock:
-        try:
-            with CHANNEL_HISTORY_PATH.open("r", encoding="utf-8") as file:
-                data = json.load(file)
-            return data if isinstance(data, dict) else {}
-        except (OSError, json.JSONDecodeError):
-            return {}
-
-
-def _record_channel_upload(url, title):
-    """Save title and URL only after Telegram confirms a successful upload."""
-    key = _canonical_video_url(url)
-    with _channel_history_lock:
-        try:
-            with CHANNEL_HISTORY_PATH.open("r", encoding="utf-8") as file:
-                history = json.load(file)
-            if not isinstance(history, dict):
-                history = {}
-        except (OSError, json.JSONDecodeError):
-            history = {}
-
-        history[key] = {"url": url, "title": title}
-        CHANNEL_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-        temporary_path = CHANNEL_HISTORY_PATH.with_suffix(".tmp")
-        with temporary_path.open("w", encoding="utf-8") as file:
-            json.dump(history, file, ensure_ascii=False, indent=2)
-        temporary_path.replace(CHANNEL_HISTORY_PATH)
-
-
-def _channel_video_is_uploaded(url):
-    return _canonical_video_url(url) in _load_channel_history()
 
 
 def _valid_url(value, route):
@@ -304,15 +264,33 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
                     continue
                 seen.add(url)
                 title = item.get("title") or "Video"
-                if skip_uploaded and _channel_video_is_uploaded(url):
-                    already_uploaded += 1
-                    skipped += 1
-                    await _safe_edit(status, f"⏭️ Already uploaded, skipping\n\n{title}\n{url}")
-                    continue
+                if skip_uploaded:
+                    try:
+                        was_uploaded = await db.is_channel_video_uploaded(
+                            _canonical_video_url(url)
+                        )
+                    except Exception:
+                        logger.exception("Could not check Neon channel upload history")
+                        was_uploaded = False
+                    if was_uploaded:
+                        already_uploaded += 1
+                        skipped += 1
+                        await _safe_edit(
+                            status,
+                            f"⏭️ Already uploaded, skipping\n\n{title}\n{url}",
+                        )
+                        continue
                 try:
                     await status.edit_text(f"🎬 Channel: {state.get('channel_name', 'Channel')}\nVideo {uploaded + failed + skipped + 1}\n\n{title}")
-                    uploaded_title = await _download_and_upload(bot, message.chat.id, url, "best", status, caption=title)
-                    _record_channel_upload(url, uploaded_title or title)
+                    uploaded_title = await _download_and_upload(
+                        bot, message.chat.id, url, "best", status, caption=title
+                    )
+                    try:
+                        await db.record_channel_upload(
+                            _canonical_video_url(url), url, uploaded_title or title
+                        )
+                    except Exception:
+                        logger.exception("Could not save successful upload to Neon history")
                     uploaded += 1
                 except Exception as exc:
                     failed += 1
