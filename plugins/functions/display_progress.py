@@ -1,5 +1,8 @@
+import asyncio
 import math
 import time
+
+from plugins.download_manager import consume_cancel_request
 
 from pyrogram import enums
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -8,6 +11,8 @@ from plugins.script import Translation
 
 
 async def progress_for_pyrogram(current, total, ud_type, message, start, user_id=None):
+    if user_id is not None and consume_cancel_request(user_id):
+        raise asyncio.CancelledError
     now = time.monotonic()
     elapsed = max(now - start, 0.001)
     percentage = min(100.0, current * 100 / total) if total and total > 0 else 0.0
