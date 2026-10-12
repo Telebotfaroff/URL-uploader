@@ -28,8 +28,16 @@ logging.getLogger("pyrogram").setLevel(logging.WARNING)
 
 
 async def youtube_dl_call_back(bot, update):
-    cb_data = update.data
-    tg_send_type, youtube_dl_format, youtube_dl_ext, ranom = cb_data.split("|")
+    cb_data = update.data or ""
+    parts = cb_data.split("|")
+    if len(parts) != 4:
+        logger.warning("Ignoring malformed YouTube download callback: %r", cb_data)
+        await update.answer(
+            "This download button is invalid or outdated. Please send the URL again.",
+            show_alert=True,
+        )
+        return False
+    tg_send_type, youtube_dl_format, youtube_dl_ext, ranom = parts
     random1 = random_char(5)
 
     save_ytdl_json_path = os.path.join(
