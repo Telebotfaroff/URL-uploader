@@ -35,6 +35,7 @@ except ValueError:
 PAGE_SIZE = 1
 MAX_SEARCHES_PER_OWNER = 10
 SEARCHES = {}
+BULK_JOBS = {}
 ACTIVE_DOWNLOADS = set()
 DOWNLOAD_DIR = os.environ.get("DOWNLOAD_LOCATION", "./gofile_downloads")
 FREEIMAGE_API_KEY = os.environ.get("FREEIMAGE_API_KEY", "").strip()
@@ -195,6 +196,19 @@ async def search_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     code = (update.effective_message.text or "").strip()
     if code.startswith("/"):
         return
+    if re.search(r"[,;\n\r]", code):
+        raw_codes = [part.strip() for part in re.split(r"[,;\n\r]+", code) if part.strip()]
+        if len(raw_codes) > 1:
+            if len(raw_codes) > 20:
+                await update.effective_message.reply_text("Bulk mode supports up to 20 video codes per batch.")
+                return
+            code_pattern = re.compile(r"[A-Za-z]{2,10}(?:[-_ ]?\d{2,8}(?:[-_][A-Za-z0-9]{1,8})?)?")
+            invalid = [value for value in raw_codes if not code_pattern.fullmatch(value)]
+            if invalid:
+                await update.effective_message.reply_text("These entries do not look like video codes: " + ", ".join(invalid[:5]))
+                return
+            await start_bulk_search(update, raw_codes)
+            return
     if not re.fullmatch(r"[A-Za-z]{2,10}(?:[-_ ]?\d{2,8}(?:[-_][A-Za-z0-9]{1,8})?)?", code):
         await update.effective_message.reply_text("Send a video code such as STAR-765 or a code prefix such as IPZZ.")
         return
@@ -634,6 +648,205 @@ async def combined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def _bulk_keyboard(bulk_id):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📥 Download all", callback_data=f"bulk:dl:{bulk_id}")],
+        [InlineKeyboardButton("📸 Screenshots all", callback_data=f"bulk:ss:{bulk_id}")],
+        [InlineKeyboardButton("📥📸 Download + Screenshots all", callback_data=f"bulk:both:{bulk_id}")],
+    ])
+
+
+def _bulk_quantity_keyboard(bulk_id, mode):
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("5 screenshots each", callback_data=f"bulkq:{mode}:{bulk_id}:5"),
+            InlineKeyboardButton("10 screenshots each", callback_data=f"bulkq:{mode}:{bulk_id}:10"),
+        ],
+        [
+            InlineKeyboardButton("15 screenshots each", callback_data=f"bulkq:{mode}:{bulk_id}:15"),
+            InlineKeyboardButton("20 screenshots each", callback_data=f"bulkq:{mode}:{bulk_id}:20"),
+        ],
+    ])
+
+
+async def start_bulk_search(update, codes):
+    status = await update.effective_message.reply_text(f"🔎 Searching {len(codes)} video codes one by one…")
+    results, missing = [], []
+    for code in codes:
+        try:
+            matches = await asyncio.to_thread(search_videos, code)
+            if not matches:
+                missing.append(code.upper())
+                continue
+            wanted = re.sub(r"[-_ ]+", "-", code).upper()
+            item = next((entry for entry in matches if re.sub(r"[-_ ]+", "-", str(entry.get("code") or "")).upper() == wanted), matches[0])
+            results.append({"requested_code": code.upper(), "item": item})
+        except Exception as exc:
+            LOGGER.warning("Bulk search failed for %s: %s", code, str(exc)[:200])
+            missing.append(code.upper())
+    if not results:
+        await status.edit_text("❌ No videos were found for any supplied code.")
+        return
+    bulk_id = uuid.uuid4().hex[:8]
+    BULK_JOBS[bulk_id] = {"owner_id": OWNER_ID, "results": results, "created": time.monotonic()}
+    while len(BULK_JOBS) > 5:
+        oldest = min(BULK_JOBS, key=lambda key: BULK_JOBS[key]["created"])
+        BULK_JOBS.pop(oldest, None)
+    lines = [
+        "📚 <b>Bulk batch ready</b>",
+        f"Found: {len(results)}/{len(codes)} video(s)",
+        "Choose one action for every found video. Jobs run sequentially to limit storage use.",
+        "",
+    ]
+    for row in results:
+        lines.append(f"• <code>{html.escape(row['requested_code'])}</code> — {html.escape(row['item'].get('title') or 'Video')}")
+    if missing:
+        lines.extend(["", "Not found: " + ", ".join(html.escape(code) for code in missing)])
+    await status.edit_text("\n".join(lines), parse_mode="HTML", reply_markup=_bulk_keyboard(bulk_id))
+
+
+async def bulk_action_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not is_owner(update):
+        await query.answer("Owner only.", show_alert=True)
+        return
+    try:
+        _, mode, bulk_id = query.data.split(":")
+        batch = BULK_JOBS[bulk_id]
+        if batch["owner_id"] != OWNER_ID or mode not in ("dl", "ss", "both"):
+            raise KeyError(bulk_id)
+    except (ValueError, KeyError):
+        await query.answer("This bulk batch expired. Send the codes again.", show_alert=True)
+        return
+    await query.answer()
+    if mode == "dl":
+        await run_bulk_jobs(query, batch, mode, 0)
+    else:
+        await query.message.reply_text(
+            f"Choose screenshot quantity for each of the {len(batch['results'])} videos:",
+            reply_markup=_bulk_quantity_keyboard(bulk_id, mode),
+        )
+
+
+async def bulk_quantity_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not is_owner(update):
+        await query.answer("Owner only.", show_alert=True)
+        return
+    try:
+        _, mode, bulk_id, raw_count = query.data.split(":")
+        count = int(raw_count)
+        batch = BULK_JOBS[bulk_id]
+        if batch["owner_id"] != OWNER_ID or mode not in ("ss", "both") or count not in (5, 10, 15, 20):
+            raise KeyError(bulk_id)
+    except (ValueError, KeyError):
+        await query.answer("This bulk selection expired or is invalid.", show_alert=True)
+        return
+    await query.answer(f"Starting {len(batch['results'])} video(s)…")
+    await run_bulk_jobs(query, batch, mode, count)
+
+
+async def run_bulk_jobs(query, batch, mode, screenshot_count):
+    status = await query.message.reply_text(
+        f"⏳ Bulk job started: {len(batch['results'])} video(s). Processing one at a time."
+    )
+    completed, failed = [], []
+    for position, row in enumerate(batch["results"], 1):
+        item, code = row["item"], row["requested_code"]
+        job_key = (OWNER_ID, item["url"])
+        if job_key in ACTIVE_DOWNLOADS:
+            failed.append((code, "already processing"))
+            continue
+        ACTIVE_DOWNLOADS.add(job_key)
+        temp_dir = tempfile.mkdtemp(prefix="gofile_bulk_")
+        path = None
+        try:
+            await status.edit_text(f"⏳ Bulk {position}/{len(batch['results'])} — {html.escape(code)}\nMode: {html.escape(mode.upper())}")
+            loop = asyncio.get_running_loop()
+            state = {"started": time.monotonic(), "last_edit": 0.0}
+
+            def download_progress(current, total, progress_mode="bytes"):
+                asyncio.run_coroutine_threadsafe(
+                    _update_transfer(status, f"⬇️ BULK {position}/{len(batch['results'])} — {code}", current, total, state, mode=progress_mode),
+                    loop,
+                )
+
+            video, path, quality = await asyncio.to_thread(download_video, item["url"], temp_dir, download_progress)
+            gofile_link = None
+            if mode in ("dl", "both"):
+                upload_state = {"started": time.monotonic(), "last_edit": 0.0}
+                def upload_progress(current, total):
+                    asyncio.run_coroutine_threadsafe(
+                        _update_transfer(status, f"☁️ GOFILE {position}/{len(batch['results'])} — {code}", current, total, upload_state),
+                        loop,
+                    )
+                gofile_link = await asyncio.to_thread(upload_guest, str(path), upload_progress)
+
+            screenshots, gallery_links, gallery_error = [], None, None
+            if mode in ("ss", "both"):
+                screenshots = await asyncio.to_thread(extract_screenshots, str(path), temp_dir, screenshot_count, video.duration)
+                try:
+                    gallery_links, gallery_error = await _upload_screenshot_gallery(status, screenshots)
+                except Exception as exc:
+                    LOGGER.warning("Bulk Freeimage.host upload failed for %s: %s", code, str(exc)[:300])
+                    gallery_error = f"Freeimage.host upload failed: {str(exc)[:180]}"
+
+            title = html.escape(item.get("title") or video.title or "Video")
+            code_html = html.escape(item.get("code") or code)
+            result_lines = [f"✅ <b>{title}</b>", f"🎞 Code: <code>{code_html}</code>"]
+            if gofile_link:
+                result_lines.append(f"🔗 GoFile: <code>{html.escape(gofile_link)}</code>")
+            if screenshots:
+                result_lines.append(f"📸 Screenshots: {len(screenshots)}")
+            await query.message.reply_text("\n".join(result_lines), parse_mode="HTML")
+
+            for start in range(0, len(screenshots), 10):
+                opened_files = []
+                try:
+                    media = []
+                    for screenshot in screenshots[start:start + 10]:
+                        handle = screenshot.open("rb")
+                        opened_files.append(handle)
+                        media.append(InputMediaPhoto(media=handle, caption=code_html))
+                    await query.message.reply_media_group(media=media)
+                finally:
+                    for handle in opened_files:
+                        handle.close()
+            if gallery_links:
+                await query.message.reply_text(_gallery_text(code, gallery_links), parse_mode="HTML", disable_web_page_preview=True)
+            elif gallery_error:
+                await query.message.reply_text(
+                    f"ℹ️ <code>{html.escape(code)}</code>: {html.escape(gallery_error)}. Screenshots were sent in Telegram.",
+                    parse_mode="HTML",
+                )
+            completed.append(code)
+        except Exception as exc:
+            LOGGER.exception("Bulk job failed for %s", code)
+            failed.append((code, str(exc)[:180]))
+            try:
+                await query.message.reply_text(f"❌ <code>{html.escape(code)}</code>: {html.escape(str(exc)[:250])}", parse_mode="HTML")
+            except Exception:
+                pass
+        finally:
+            ACTIVE_DOWNLOADS.discard(job_key)
+            if path:
+                try:
+                    path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
+    summary = [
+        "🏁 <b>Bulk job finished</b>",
+        f"Mode: {html.escape(mode.upper())}",
+        f"Successful: {len(completed)}",
+        f"Failed/skipped: {len(failed)}",
+    ]
+    if failed:
+        summary.append("Failures: " + ", ".join(f"{html.escape(code)} ({html.escape(reason)})" for code, reason in failed[:10]))
+    await status.edit_text("\n".join(summary), parse_mode="HTML")
+
+
 async def unknown_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_owner(update):
         await update.callback_query.answer("Owner only.", show_alert=True)
@@ -655,6 +868,8 @@ def main():
     application.add_handler(CallbackQueryHandler(screenshot_callback, pattern=r"^sc:"))
     application.add_handler(CallbackQueryHandler(combined_quantity_callback, pattern=r"^both:"))
     application.add_handler(CallbackQueryHandler(combined_callback, pattern=r"^bc:"))
+    application.add_handler(CallbackQueryHandler(bulk_action_callback, pattern=r"^bulk:"))
+    application.add_handler(CallbackQueryHandler(bulk_quantity_callback, pattern=r"^bulkq:"))
     application.add_handler(CallbackQueryHandler(unknown_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_message))
     LOGGER.info("GoFile bot starting in owner-only mode; no database configured.")
