@@ -61,7 +61,7 @@ def _transfer_text(phase, current, total, state, mode="bytes"):
         percent = min(100, int(current * 100 / total)) if total > 0 else 0
         filled = min(12, percent * 12 // 100)
         bar = "█" * filled + "░" * (12 - filled)
-        return f"{phase}\\n{bar} {percent}%\\n🖼️ Uploaded {current}/{total} images"
+        return f"{phase}\n{bar} {percent}%\n🖼️ Uploaded {current}/{total} images"
     if mode == "time" and total > 0:
         percent = min(100, int(current * 100 / total))
         filled = min(12, percent * 12 // 100)
