@@ -26,6 +26,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 LOGGER = logging.getLogger("gofile-bot")
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
+SCREENSHOT_CHANNEL_ID = -1003963567446
 try:
     OWNER_ID = int(os.environ.get("OWNER_ID", "7367490186").strip())
 except ValueError:
@@ -111,31 +112,60 @@ def _keyboard(search_id, index, count):
     return InlineKeyboardMarkup(rows)
 
 
-def _screenshot_quantity_keyboard(search_id, index):
+def _destination_quantity_keyboard(callback_prefix, identifier, index_or_mode=None):
+    """Offer each supported screenshot count for chat or private-channel delivery."""
+    if callback_prefix == "bulkq":
+        mode, bulk_id = identifier, index_or_mode
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("5 here", callback_data=f"bulkq:{mode}:{bulk_id}:5:chat"),
+             InlineKeyboardButton("10 here", callback_data=f"bulkq:{mode}:{bulk_id}:10:chat")],
+            [InlineKeyboardButton("15 here", callback_data=f"bulkq:{mode}:{bulk_id}:15:chat"),
+             InlineKeyboardButton("20 here", callback_data=f"bulkq:{mode}:{bulk_id}:20:chat")],
+            [InlineKeyboardButton("5 → private channel", callback_data=f"bulkq:{mode}:{bulk_id}:5:channel"),
+             InlineKeyboardButton("10 → private channel", callback_data=f"bulkq:{mode}:{bulk_id}:10:channel")],
+            [InlineKeyboardButton("15 → private channel", callback_data=f"bulkq:{mode}:{bulk_id}:15:channel"),
+             InlineKeyboardButton("20 → private channel", callback_data=f"bulkq:{mode}:{bulk_id}:20:channel")],
+        ])
+    search_id, index = identifier, index_or_mode
     return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("5 screenshots", callback_data=f"sc:{search_id}:{index}:5"),
-            InlineKeyboardButton("10 screenshots", callback_data=f"sc:{search_id}:{index}:10"),
-        ],
-        [
-            InlineKeyboardButton("15 screenshots", callback_data=f"sc:{search_id}:{index}:15"),
-            InlineKeyboardButton("20 screenshots", callback_data=f"sc:{search_id}:{index}:20"),
-        ],
+        [InlineKeyboardButton("5 here", callback_data=f"{callback_prefix}:{search_id}:{index}:5:chat"),
+         InlineKeyboardButton("10 here", callback_data=f"{callback_prefix}:{search_id}:{index}:10:chat")],
+        [InlineKeyboardButton("15 here", callback_data=f"{callback_prefix}:{search_id}:{index}:15:chat"),
+         InlineKeyboardButton("20 here", callback_data=f"{callback_prefix}:{search_id}:{index}:20:chat")],
+        [InlineKeyboardButton("5 → private channel", callback_data=f"{callback_prefix}:{search_id}:{index}:5:channel"),
+         InlineKeyboardButton("10 → private channel", callback_data=f"{callback_prefix}:{search_id}:{index}:10:channel")],
+        [InlineKeyboardButton("15 → private channel", callback_data=f"{callback_prefix}:{search_id}:{index}:15:channel"),
+         InlineKeyboardButton("20 → private channel", callback_data=f"{callback_prefix}:{search_id}:{index}:20:channel")],
     ])
+
+
+def _screenshot_quantity_keyboard(search_id, index):
+    return _destination_quantity_keyboard("sc", search_id, index)
 
 
 def _combined_quantity_keyboard(search_id, index):
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("5 screenshots", callback_data=f"bc:{search_id}:{index}:5"),
-            InlineKeyboardButton("10 screenshots", callback_data=f"bc:{search_id}:{index}:10"),
-        ],
-        [
-            InlineKeyboardButton("15 screenshots", callback_data=f"bc:{search_id}:{index}:15"),
-            InlineKeyboardButton("20 screenshots", callback_data=f"bc:{search_id}:{index}:20"),
-        ],
-    ])
+    return _destination_quantity_keyboard("bc", search_id, index)
 
+
+
+async def _send_screenshot_albums(bot, screenshots, caption, destination_chat_id):
+    """Send Telegram photo albums in batches of at most ten images."""
+    for start in range(0, len(screenshots), 10):
+        opened_files = []
+        try:
+            media = []
+            for screenshot in screenshots[start:start + 10]:
+                handle = screenshot.open("rb")
+                opened_files.append(handle)
+                media.append(InputMediaPhoto(media=handle, caption=caption))
+            await bot.send_media_group(chat_id=destination_chat_id, media=media)
+        finally:
+            for handle in opened_files:
+                handle.close()
+
+
+def _screenshot_destination(update, destination):
+    return SCREENSHOT_CHANNEL_ID if destination == "channel" else update.effective_chat.id
 
 
 def _caption(item, index, count):
@@ -351,9 +381,11 @@ async def screenshot_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.answer("Owner only.", show_alert=True)
         return
     try:
-        _, search_id, raw_index, raw_count = query.data.split(":")
+        _, search_id, raw_index, raw_count, destination = query.data.split(":")
         index = int(raw_index)
         count = int(raw_count)
+        if destination not in ("chat", "channel"):
+            raise ValueError("Invalid screenshot destination")
         session = SEARCHES[search_id]
         if session["owner_id"] != OWNER_ID:
             raise KeyError(search_id)
@@ -400,25 +432,13 @@ async def screenshot_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
 
         video_code = html.escape(item.get("code") or "Unknown")
-        # Telegram albums accept at most 10 photos per message group.
-        for start in range(0, len(screenshots), 10):
-            batch = screenshots[start:start + 10]
-            opened_files = []
-            try:
-                media = []
-                for screenshot in batch:
-                    handle = screenshot.open("rb")
-                    opened_files.append(handle)
-                    media.append(InputMediaPhoto(
-                        media=handle,
-                        caption=video_code,
-                    ))
-                await query.message.reply_media_group(media=media)
-            finally:
-                for handle in opened_files:
-                    handle.close()
-
-        await status.delete()
+        await _send_screenshot_albums(
+            context.bot, screenshots, video_code, _screenshot_destination(update, destination)
+        )
+        await status.edit_text(
+            f"✅ Sent {len(screenshots)} screenshot(s) to "
+            f"{'the private channel' if destination == 'channel' else 'this chat'}."
+        )
     except Exception as exc:
         LOGGER.exception("Screenshot extraction failed")
         try:
@@ -466,9 +486,11 @@ async def combined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("Owner only.", show_alert=True)
         return
     try:
-        _, search_id, raw_index, raw_count = query.data.split(":")
+        _, search_id, raw_index, raw_count, destination = query.data.split(":")
         index = int(raw_index)
         count = int(raw_count)
+        if destination not in ("chat", "channel"):
+            raise ValueError("Invalid screenshot destination")
         session = SEARCHES[search_id]
         if session["owner_id"] != OWNER_ID:
             raise KeyError(search_id)
@@ -545,21 +567,13 @@ async def combined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await query.message.reply_text(caption, parse_mode="HTML", disable_web_page_preview=False)
 
-        # Every screenshot is captioned with the video code; albums are limited to 10 photos.
-        for start in range(0, len(screenshots), 10):
-            batch = screenshots[start:start + 10]
-            opened_files = []
-            try:
-                media = []
-                for screenshot in batch:
-                    handle = screenshot.open("rb")
-                    opened_files.append(handle)
-                    media.append(InputMediaPhoto(media=handle, caption=code))
-                await query.message.reply_media_group(media=media)
-            finally:
-                for handle in opened_files:
-                    handle.close()
-        await status.delete()
+        await _send_screenshot_albums(
+            context.bot, screenshots, code, _screenshot_destination(update, destination)
+        )
+        await status.edit_text(
+            f"✅ GoFile upload complete. Sent {len(screenshots)} screenshot(s) to "
+            f"{'the private channel' if destination == 'channel' else 'this chat'}."
+        )
     except Exception as exc:
         LOGGER.exception("Combined download/upload/screenshot job failed")
         try:
@@ -586,16 +600,7 @@ def _bulk_keyboard(bulk_id):
 
 
 def _bulk_quantity_keyboard(bulk_id, mode):
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("5 screenshots each", callback_data=f"bulkq:{mode}:{bulk_id}:5"),
-            InlineKeyboardButton("10 screenshots each", callback_data=f"bulkq:{mode}:{bulk_id}:10"),
-        ],
-        [
-            InlineKeyboardButton("15 screenshots each", callback_data=f"bulkq:{mode}:{bulk_id}:15"),
-            InlineKeyboardButton("20 screenshots each", callback_data=f"bulkq:{mode}:{bulk_id}:20"),
-        ],
-    ])
+    return _destination_quantity_keyboard("bulkq", mode, bulk_id)
 
 
 async def start_bulk_search(update, codes):
@@ -652,7 +657,7 @@ async def bulk_action_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await run_bulk_jobs(query, batch, mode, 0)
     else:
         await query.message.reply_text(
-            f"Choose screenshot quantity for each of the {len(batch['results'])} videos:",
+            f"Choose screenshot quantity and destination for each of the {len(batch['results'])} videos:",
             reply_markup=_bulk_quantity_keyboard(bulk_id, mode),
         )
 
@@ -663,8 +668,10 @@ async def bulk_quantity_callback(update: Update, context: ContextTypes.DEFAULT_T
         await query.answer("Owner only.", show_alert=True)
         return
     try:
-        _, mode, bulk_id, raw_count = query.data.split(":")
+        _, mode, bulk_id, raw_count, destination = query.data.split(":")
         count = int(raw_count)
+        if destination not in ("chat", "channel"):
+            raise ValueError("Invalid screenshot destination")
         batch = BULK_JOBS[bulk_id]
         if batch["owner_id"] != OWNER_ID or mode not in ("ss", "both") or count not in (5, 10, 15, 20):
             raise KeyError(bulk_id)
@@ -672,10 +679,10 @@ async def bulk_quantity_callback(update: Update, context: ContextTypes.DEFAULT_T
         await query.answer("This bulk selection expired or is invalid.", show_alert=True)
         return
     await query.answer(f"Starting {len(batch['results'])} video(s)…")
-    await run_bulk_jobs(query, batch, mode, count)
+    await run_bulk_jobs(query, batch, mode, count, destination)
 
 
-async def run_bulk_jobs(query, batch, mode, screenshot_count):
+async def run_bulk_jobs(query, batch, mode, screenshot_count, destination="chat"):
     status = await query.message.reply_text(
         f"⏳ Bulk job started: {len(batch['results'])} video(s). Processing one at a time."
     )
@@ -724,18 +731,11 @@ async def run_bulk_jobs(query, batch, mode, screenshot_count):
                 result_lines.append(f"📸 Screenshots: {len(screenshots)}")
             await query.message.reply_text("\n".join(result_lines), parse_mode="HTML")
 
-            for start in range(0, len(screenshots), 10):
-                opened_files = []
-                try:
-                    media = []
-                    for screenshot in screenshots[start:start + 10]:
-                        handle = screenshot.open("rb")
-                        opened_files.append(handle)
-                        media.append(InputMediaPhoto(media=handle, caption=code_html))
-                    await query.message.reply_media_group(media=media)
-                finally:
-                    for handle in opened_files:
-                        handle.close()
+            if screenshots:
+                destination_chat_id = SCREENSHOT_CHANNEL_ID if destination == "channel" else query.message.chat_id
+                await _send_screenshot_albums(
+                    query.get_bot(), screenshots, code_html, destination_chat_id
+                )
             completed.append(code)
         except Exception as exc:
             LOGGER.exception("Bulk job failed for %s", code)
