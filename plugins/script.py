@@ -3,29 +3,74 @@ from pyrogram import enums
 
 class Translation(object):
 
-    START_TEXT = """👋 Hello <b>{}</b> 
+    START_TEXT = """👋 Hello <b>{}</b>!
+
+<blockquote>I'm your URL Uploader Bot. Send me a direct file/video link and I'll upload it to Telegram.</blockquote>
+
+<b>📚 COMMAND MENU</b>
 <blockquote>
-I'm a Telegram URL Uploader Bot 
-Send me a direct link and I'll upload it to Telegram  
-as a file or video.
+/start — Show this welcome menu
+/help — Show all commands and usage
+/about — About the bot
+/settings — Configure upload preferences
+/caption — Learn how to edit a media caption
+
+<b>🎬 Javtiful Downloader</b>
+/vid &lt;video URL&gt; — Choose quality and upload one video
+/channel &lt;channel URL&gt; — Browse or batch-download channel videos
+/actress &lt;actress URL&gt; — Browse or batch-download an actress listing
+/resume — Resume a saved channel/actress batch after a restart
+/setdump — View dump-channel setting (owner only)
+/setdump &lt;@channel or ID&gt; — Set the dump channel
+/setdump off — Disable dump-channel uploads
 </blockquote>
-<b>Use the help button to learn how to use me!</b>
+
+<b>📤 Upload a file</b>
+Send a direct link, optionally followed by a new filename:
+<code>https://example.com/file.mp4 | NewName.mp4</code>
+
+Use the buttons below for settings and more help.
 """
 
     
 
     HELP_TEXT = """
-<b>How To Use This Bot</b> 🤔
+<b>📚 All Commands</b>
 <blockquote>
-• Go to /settings and customize the bot as you like  
-• Send me a custom thumbnail to save it permanently  
-• Send link like this:  
-  https://example.com/file.mp4 | New Name.mkv 
-• Choose the desired upload option  
-• Reply to any media with `/caption` + your text to set a caption
-• `/vid <Javtiful video URL>` — inspect, choose quality, and upload a video
-• `/channel <Javtiful channel URL>` — inspect a channel and download its first page or batch
-• `/actress <Javtiful actress URL>` — inspect an actress listing and download its first page or batch
+<b>General</b>
+/start — Show the welcome menu and command list
+/help — Show this command guide
+/about — About the bot
+/settings — Customize upload settings
+/caption — Show how to change a media caption
+
+<b>Direct URL Upload</b>
+Send a direct file/video URL to the bot.
+Optional rename format:
+<code>https://example.com/file.mp4 | NewName.mp4</code>
+Choose the upload format when prompted.
+
+<b>Javtiful Downloader</b>
+/vid &lt;video URL&gt; — Inspect a video, choose quality, then upload it
+/channel &lt;channel URL&gt; — Inspect a channel; download the first page or all available pages
+/actress &lt;actress URL&gt; — Inspect an actress/model listing; download the first page or all available pages
+/resume — Restore the last saved batch after a Colab restart; completed uploads are skipped using history
+
+<b>Dump Channel (owner only)</b>
+/setdump — Show the current dump channel
+/setdump &lt;@channelusername or -100... ID&gt; — Set the destination channel
+/setdump off — Disable the dump channel
+
+<b>Batch controls</b>
+On the /channel and /actress buttons, tap the speed button to cycle:
+🛡 Safe: 1 download + 1 upload
+⚖️ Balanced: 2 downloads + 2 uploads
+⚡ Fast: 3 downloads + 3 uploads
+Toggle duplicate skipping before starting a batch.
+
+<b>Notes</b>
+• The bot is private and only its configured owner can use it.
+• Keep your Colab runtime running during a batch. After a restart, use /resume to rescan the saved listing.
 </blockquote>
 """
     
