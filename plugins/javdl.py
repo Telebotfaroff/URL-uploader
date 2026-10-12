@@ -503,11 +503,12 @@ def _channel_keyboard(skip_uploaded=True, speed=DEFAULT_PARALLEL_SPEED):
         )],
         [InlineKeyboardButton(f"⚙️ Speed: {speed.title()} ({down}↓/{up}↑)", callback_data="javdl|speed")],
         [InlineKeyboardButton("⬇️ Download first page", callback_data="javdl|page")],
+        [InlineKeyboardButton("🎯 Choose custom page", callback_data="javdl|custom_page")],
         [InlineKeyboardButton("📥 Download all videos", callback_data="javdl|all")],
     ])
 
 
-async def _process_channel(bot, message, state, user_id, all_pages=False):
+async def _process_channel(bot, message, state, user_id, all_pages=False, selected_page=None):
     status = await message.reply_text("⏳ Preparing channel download queue…")
     uploaded = failed = skipped = already_uploaded = 0
     seen = set()
@@ -524,7 +525,12 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
     worker_count = download_limit + upload_limit
     try:
         total_pages = max(1, min(int(state.get("total_pages") or 1), MAX_CHANNEL_PAGES))
-        pages = range(total_pages) if all_pages else range(1)
+        if selected_page is not None:
+            if not 1 <= int(selected_page) <= total_pages:
+                raise ValueError(f"Page must be between 1 and {total_pages}.")
+            pages = [int(selected_page) - 1]
+        else:
+            pages = range(total_pages) if all_pages else range(1)
         total_limit = MAX_BATCH_VIDEOS
         jobs = []
         for page_number in pages:
@@ -570,8 +576,9 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
         try:
             checkpoint = {
                 "url": state["url"], "type": state.get("listing_type", "channel"),
-                "all_pages": bool(all_pages), "skip_uploaded": skip_uploaded,
-                "speed": speed, "channel_name": state.get("channel_name", "Listing"),
+                "all_pages": bool(all_pages), "selected_page": selected_page,
+                "skip_uploaded": skip_uploaded, "speed": speed,
+                "channel_name": state.get("channel_name", "Listing"),
             }
             await db.set_setting(f"batch_resume_{user_id}", json.dumps(checkpoint))
             await db.save_batch_checkpoint(user_id, state["url"], checkpoint["type"], all_pages, speed, "running")
@@ -641,8 +648,9 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
         await _safe_edit(status, 
             f"🏁 Listing processing finished\n\n📺 {state.get('channel_name', 'Channel')}\n"
             f"✅ Uploaded: {uploaded}\n⏭️ Skipped: {skipped} (already uploaded: {already_uploaded})\n❌ Failed: {failed}\n"
-            f"📄 Pages scanned: {min(total_pages, len(pages) if hasattr(pages, '__len__') else total_pages)}\n"
-            f"⚙️ Mode: {speed.title()} • {download_limit} downloads + {upload_limit} uploads"
+            f"📄 Pages scanned: {len(pages)}"
+            + (f" (selected page: {selected_page})" if selected_page is not None else "")
+            + f"\n⚙️ Mode: {speed.title()} • {download_limit} downloads + {upload_limit} uploads"
         )
         if failed == 0:
             try:
@@ -758,7 +766,11 @@ async def resume_batch_command(bot, message):
         }
         pending[user_id] = state
         await _safe_edit(status, "🔄 Resuming saved batch. Upload history will skip completed videos.")
-        await _process_channel(bot, message, state, user_id, all_pages=bool(data.get("all_pages", True)))
+        await _process_channel(
+            bot, message, state, user_id,
+            all_pages=bool(data.get("all_pages", True)),
+            selected_page=data.get("selected_page"),
+        )
     except Exception as exc:
         logger.exception("Could not resume saved batch")
         await _safe_edit(status, f"❌ Resume failed: {type(exc).__name__}: {str(exc)[:500]}")
@@ -938,6 +950,37 @@ async def actress_command(bot, message):
         await _safe_edit(status, f"❌ Actress listing inspection failed\n{type(exc).__name__}: {str(exc)[:700]}")
 
 
+@Client.on_message(filters.private & filters.text)
+async def custom_page_number_message(bot, message):
+    """Handle a page number after the user chooses the custom-page option."""
+    if not message.from_user:
+        return
+    state = pending.get(message.from_user.id)
+    if not state or not state.get("awaiting_custom_page"):
+        return
+
+    value = (message.text or "").strip()
+    if not value.isdigit():
+        return await message.reply_text(
+            f"Send a page number from 1 to {state.get('total_pages', 1)}, or send /cancel."
+        )
+    page_number = int(value)
+    total_pages = max(1, min(int(state.get("total_pages") or 1), MAX_CHANNEL_PAGES))
+    if not 1 <= page_number <= total_pages:
+        return await message.reply_text(
+            f"❌ Invalid page. Choose a page from 1 to {total_pages}."
+        )
+    if state.get("processing"):
+        return await message.reply_text("⏳ This listing is already being processed.")
+
+    state["awaiting_custom_page"] = False
+    state["processing"] = True
+    await message.reply_text(f"🎯 Starting page {page_number}…")
+    await _process_channel(
+        bot, message, state, message.from_user.id, selected_page=page_number
+    )
+
+
 @Client.on_callback_query(filters.regex(r"^javdl\|"))
 async def javdl_callback(bot, query):
     state = pending.get(query.from_user.id)
@@ -988,7 +1031,21 @@ async def javdl_callback(bot, query):
             else "Already-uploaded videos will be downloaded again."
         )
         return await query.message.edit_reply_markup(
-            reply_markup=_channel_keyboard(state["skip_uploaded"])
+            reply_markup=_channel_keyboard(state["skip_uploaded"], state.get("speed", DEFAULT_PARALLEL_SPEED))
+        )
+
+    if action[1] == "custom_page":
+        if state.get("type") != "channel":
+            return await query.answer("This listing selection has expired.", show_alert=True)
+        if state.get("processing"):
+            return await query.answer("This batch is already running.", show_alert=True)
+        total_pages = max(1, min(int(state.get("total_pages") or 1), MAX_CHANNEL_PAGES))
+        state["awaiting_custom_page"] = True
+        await query.answer("Send a page number")
+        return await query.message.edit_text(
+            f"🎯 {state.get('channel_name', 'Listing')}\n"
+            f"Available pages: 1–{total_pages}\n\n"
+            "Send the page number you want to download (for example, 3)."
         )
 
     if action[1] in {"page", "all"}:
