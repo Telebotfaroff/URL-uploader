@@ -11,9 +11,9 @@ A lightweight, personal-use Telegram bot that searches Javtiful by video code, l
 - Download a selected result and upload it to GoFile without a GoFile account token.
 - Extract 5, 10, 15, or 20 evenly spaced screenshots from a selected video using the **SS** button.
 - For **SS**, **DL + SS**, and bulk screenshot jobs, choose whether screenshots go to the current chat or private Telegram channel `-1003963567446`.
-- Bulk mode: send up to 20 video codes separated by new lines, commas, or semicolons, then choose **Download all**, **Screenshots all**, or **Download + Screenshots all**. Screenshot actions let you choose quantity and destination. Bulk jobs run sequentially and report successes/failures.
+- Bulk mode: send up to 20 video codes separated by new lines, commas, or semicolons, then choose **Download all**, **Screenshots all**, or **Download + Screenshots all**. Screenshot actions let you choose quantity and destination. Bulk jobs run through a bounded parallel pipeline and report each video's progress, success/failure, and GoFile URL.
 - Display the GoFile URL as visible, copyable text in the result message.
-- Show download/upload progress, transfer speed, and ETA when available.
+- Show separate per-video download/upload progress, transfer speed, and ETA when available.\n- Configure bulk parallelism with `/parallel`: 1–5 download workers, 1–3 GoFile upload workers, and 1–2 screenshot workers. Defaults are 3 downloads, 2 uploads, and 1 screenshot worker.\n- Bound active video jobs by the download-worker count and clean up each video's temporary files after processing to limit Colab disk usage.
 - Restrict bot commands and button callbacks to your Telegram user ID.
 - Keep search sessions in memory only; no database or persistent history.
 
@@ -37,7 +37,7 @@ No database, Neon, `API_ID`, `API_HASH`, or GoFile API token is required. FFmpeg
 5. Run **Start bot** and keep that cell running.
 7. Add the bot to private channel `-1003963567446` and grant it permission to post messages if you want channel delivery.
 8. Open your bot in Telegram and send a full video code such as `IPZZ-989` or a prefix such as `IPZZ`. Choose a result, then press **DL** to upload to GoFile, **SS** to extract screenshots, or **DL + SS** to do both. Screenshot quantity buttons let you choose **here** or **private channel**.
-9. For bulk mode, send multiple full codes separated by new lines, commas, or semicolons (maximum 20). Choose **Download all**, **Screenshots all**, or **Download + Screenshots all**, then select quantity and destination. Jobs run one video at a time.
+9. For bulk mode, send multiple full codes separated by new lines, commas, or semicolons (maximum 20). Choose **Download all**, **Screenshots all**, or **Download + Screenshots all**, then select screenshot quantity and destination where applicable. Use `/parallel` to adjust download, screenshot, and upload workers; settings apply to the next batch. The pipeline overlaps different videos while keeping the number of active video jobs bounded.
 
 ## Project files
 
