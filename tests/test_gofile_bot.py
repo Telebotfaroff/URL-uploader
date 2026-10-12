@@ -4,7 +4,10 @@ from pathlib import Path
 
 from gofile_media import _safe_name, extract_screenshots
 from gofile_search import _parse_page
-from gofile_bot import (\n    _screenshot_quantity_keyboard, _combined_quantity_keyboard, _bulk_quantity_keyboard,\n    _parallel_keyboard, PARALLEL_LIMITS,\n)
+from gofile_bot import (
+    _screenshot_quantity_keyboard, _combined_quantity_keyboard, _bulk_quantity_keyboard,
+    _parallel_keyboard, PARALLEL_LIMITS,
+)
 
 
 class GofileSearchTests(unittest.TestCase):
