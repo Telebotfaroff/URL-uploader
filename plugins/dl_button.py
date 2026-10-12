@@ -68,8 +68,8 @@ async def ddl_call_back(bot, update):
                 l = entity.length
                 youtube_dl_url = youtube_dl_url[o:o + l]
 
-    custom_file_name = os.path.basename(str(custom_file_name).replace("\\\\", "/").strip())
-    custom_file_name = re.sub(r"[\\x00-\\x1f]", "_", custom_file_name) or "download.bin"
+    custom_file_name = os.path.basename(str(custom_file_name).replace("\\", "/").strip())
+    custom_file_name = re.sub(r"[\x00-\x1f]", "_", custom_file_name) or "download.bin"
 
     description = Translation.CUSTOM_CAPTION_UL_FILE
     start = datetime.now()
