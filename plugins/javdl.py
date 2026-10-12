@@ -243,7 +243,7 @@ async def javtiful_channel_command(bot, message):
     if len(parts) < 2:
         return await message.reply_text(
             "Usage: /channel https://javtiful.com/channel/…\n\n"
-            "This command inspects a Javtiful channel. Use /setchannel to configure a Telegram upload destination."
+            "This command inspects a Javtiful channel and offers first-page or batch downloads. Uploaded videos are sent to this chat."
         )
     url = parts[1].strip()
     if not _valid_url(url, "/channel/"):
