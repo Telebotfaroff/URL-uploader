@@ -14,7 +14,7 @@ from PIL import Image
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from plugins.config import Config
+from plugins.config import Config, get_upload_session
 from plugins.database.database import db
 from plugins.javdl_core.channel import JavtifulChannelExtractor
 from plugins.javdl_core.downloader import Downloader
@@ -433,9 +433,11 @@ async def _download_and_upload(bot, chat_id, url, quality, status, caption=None,
             send_kwargs["duration"] = duration
         if thumb_path:
             send_kwargs["thumb"] = thumb_path
+        upload_client, upload_session_lock = get_upload_session(bot)
+
         async def _send_with_fallback():
             try:
-                await bot.send_video(**send_kwargs)
+                await upload_client.send_video(**send_kwargs)
                 return "\n📦 Destination: dump channel" if dump_chat_id is not None else ""
             except Exception:
                 if dump_chat_id is None:
@@ -446,16 +448,18 @@ async def _download_and_upload(bot, chat_id, url, quality, status, caption=None,
                 send_kwargs["chat_id"] = chat_id
                 upload_state["time"] = 0.0
                 upload_state["started"] = time.monotonic()
-                await bot.send_video(**send_kwargs)
+                await upload_client.send_video(**send_kwargs)
                 return "\n↩️ Destination: your chat (fallback)"
 
         if upload_semaphore is None:
-            await _dashboard_start(status, "upload", title)
-            destination_note = await _send_with_fallback()
-        else:
-            async with upload_semaphore:
+            async with upload_session_lock:
                 await _dashboard_start(status, "upload", title)
                 destination_note = await _send_with_fallback()
+        else:
+            async with upload_semaphore:
+                async with upload_session_lock:
+                    await _dashboard_start(status, "upload", title)
+                    destination_note = await _send_with_fallback()
         if _dashboard_key(status) not in _BATCH_DASHBOARDS:
             await _safe_edit(status,
                 f"✅ Uploaded successfully\n\n🎬 {title}\n"
