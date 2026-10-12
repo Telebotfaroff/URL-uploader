@@ -214,12 +214,8 @@ def _format_active_transfer(item):
     current = max(0, int(item.get("current") or 0))
     total = max(0, int(item.get("total") or 0))
     now = time.monotonic()
-    previous_at = item.get("previous_at", now)
-    previous_bytes = item.get("previous_bytes", current)
-    elapsed = max(now - previous_at, 0.001)
-    speed = max(0, current - previous_bytes) / elapsed
-    item["previous_at"] = now
-    item["previous_bytes"] = current
+    elapsed = max(now - item.get("started", now), 0.001)
+    speed = current / elapsed
     percent = min(100, int(current * 100 / total)) if total else 0
     eta = "—"
     if total and speed > 0:
@@ -384,25 +380,34 @@ def _download_thumbnail(url):
 async def _download_and_upload(bot, chat_id, url, quality, status, caption=None, download_semaphore=None, upload_semaphore=None):
     video = None
     thumb_path = None
+    title = caption or "Video"
+    dashboard_active = _dashboard_key(status) in _BATCH_DASHBOARDS
     try:
-        await _safe_edit(status, "🔎 Extracting video details…")
+        if not dashboard_active:
+            await _safe_edit(status, "🔎 Extracting video details…")
         video = await asyncio.to_thread(extractor.extract, url)
         if not video.qualities:
             raise RuntimeError("No downloadable video stream was found. The page may require browser playback or may have changed.")
 
         loop = asyncio.get_running_loop()
-        progress = _download_progress(status, loop, video.title or "Video")
-        await _safe_edit(status, f"⬇️ Preparing download: {video.title or 'Video'}")
+        title = video.title or caption or "Video"
+        progress = _download_progress(status, loop, title)
         if download_semaphore is None:
+            if not await _dashboard_start(status, "download", title):
+                await _safe_edit(status, f"⬇️ Preparing download: {title}")
             await asyncio.to_thread(downloader.download, video, quality, progress)
         else:
             async with download_semaphore:
+                if not await _dashboard_start(status, "download", title):
+                    await _safe_edit(status, f"⬇️ Preparing download: {title}")
                 await asyncio.to_thread(downloader.download, video, quality, progress)
+        await _dashboard_remove(status, title, "download")
 
         thumb_path = await asyncio.to_thread(_download_thumbnail, video.thumbnail)
         upload_state = {"time": 0.0}
-        title = video.title or "Video"
-        await _safe_edit(status, f"📤 Uploading: {title}")
+        title = video.title or caption or "Video"
+        if _dashboard_key(status) not in _BATCH_DASHBOARDS:
+            await _safe_edit(status, f"📤 Uploading: {title}")
         # Upload to the configured dump channel first; if it fails, use the user's chat.
         dump_chat_id = None
         try:
@@ -436,7 +441,8 @@ async def _download_and_upload(bot, chat_id, url, quality, status, caption=None,
                 if dump_chat_id is None:
                     raise
                 logger.exception("Upload to dump channel failed; falling back to user chat")
-                await _safe_edit(status, "⚠️ Dump-channel upload failed. Retrying in your chat…")
+                if _dashboard_key(status) not in _BATCH_DASHBOARDS:
+                    await _safe_edit(status, "⚠️ Dump-channel upload failed. Retrying in your chat…")
                 send_kwargs["chat_id"] = chat_id
                 upload_state["time"] = 0.0
                 upload_state["started"] = time.monotonic()
@@ -444,16 +450,20 @@ async def _download_and_upload(bot, chat_id, url, quality, status, caption=None,
                 return "\n↩️ Destination: your chat (fallback)"
 
         if upload_semaphore is None:
+            await _dashboard_start(status, "upload", title)
             destination_note = await _send_with_fallback()
         else:
             async with upload_semaphore:
+                await _dashboard_start(status, "upload", title)
                 destination_note = await _send_with_fallback()
-        await _safe_edit(status, 
-            f"✅ Uploaded successfully\n\n🎬 {title}\n"
-            f"🎚 Quality: {video.selected_quality or quality}{destination_note}"
-        )
+        if _dashboard_key(status) not in _BATCH_DASHBOARDS:
+            await _safe_edit(status,
+                f"✅ Uploaded successfully\n\n🎬 {title}\n"
+                f"🎚 Quality: {video.selected_quality or quality}{destination_note}"
+            )
         return title
     finally:
+        await _dashboard_remove(status, title)
         for path in (getattr(video, "local_path", None), thumb_path):
             if path:
                 try:
@@ -552,16 +562,11 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
         queue = asyncio.Queue()
         for job in jobs:
             queue.put_nowait(job)
-        await _safe_edit(
-            status,
-            f"📊 BATCH IN PROGRESS • {speed.title()} MODE\n\n"
-            f"📺 {state.get('channel_name', 'Channel')}\n"
-            f"🎬 Videos queued: {len(jobs)}\n"
-            f"⬇️ Downloads: up to {download_limit} at once\n"
-            f"📤 Uploads: up to {upload_limit} at once\n"
-            f"🔁 Up to 2 retries per video\n\n"
-            f"✅ Uploaded: {uploaded}  •  ⏭️ Skipped: {skipped}  •  ❌ Failed: {failed}"
-        )
+        _BATCH_DASHBOARDS[_dashboard_key(status)] = {
+            "mode": speed, "total": len(jobs), "completed": 0, "failed": 0,
+            "skipped": skipped, "downloads": {}, "uploads": {},
+        }
+        await _dashboard_refresh(status, force=True)
 
         async def worker():
             nonlocal uploaded, failed
@@ -590,20 +595,23 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
                     except Exception:
                         logger.exception("Could not save successful upload to Neon history")
                     uploaded += 1
-                    await _safe_edit(
-                        status,
-                        f"✅ VIDEO COMPLETE\n🎬 {uploaded_title or title}\n\n"
-                        f"📊 {uploaded}/{len(jobs)} processed  •  ⏭️ {skipped} skipped  •  ❌ {failed} failed",
-                    )
+                    dashboard = _BATCH_DASHBOARDS.get(_dashboard_key(status))
+                    if dashboard:
+                        dashboard["completed"] = uploaded
+                        dashboard["failed"] = failed
+                        await _dashboard_refresh(status, force=True)
+                    else:
+                        await _safe_edit(status, f"✅ VIDEO COMPLETE\\n🎬 {uploaded_title or title}\\n\\n📊 {uploaded}/{len(jobs)} processed  •  ⏭️ {skipped} skipped  •  ❌ {failed} failed")
                 except Exception as exc:
                     failed += 1
                     logger.exception("Channel video failed: %s", url)
-                    await _safe_edit(
-                        status,
-                        f"⚠️ VIDEO FAILED\n🎬 {title[:180]}\n"
-                        f"{type(exc).__name__}: {str(exc)[:300]}\n\n"
-                        f"📊 {uploaded}/{len(jobs)} processed  •  ⏭️ {skipped} skipped  •  ❌ {failed} failed",
-                    )
+                    dashboard = _BATCH_DASHBOARDS.get(_dashboard_key(status))
+                    if dashboard:
+                        dashboard["completed"] = uploaded
+                        dashboard["failed"] = failed
+                        await _dashboard_refresh(status, force=True)
+                    else:
+                        await _safe_edit(status, f"⚠️ VIDEO FAILED\\n🎬 {title[:180]}\\n{type(exc).__name__}: {str(exc)[:300]}\\n\\n📊 {uploaded}/{len(jobs)} processed  •  ⏭️ {skipped} skipped  •  ❌ {failed} failed")
                 finally:
                     queue.task_done()
         await asyncio.gather(*(worker() for _ in range(min(worker_count, len(jobs)))))
@@ -622,6 +630,7 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
     except Exception as exc:
         await _safe_edit(status, f"❌ Channel processing failed\n{type(exc).__name__}: {str(exc)[:700]}")
     finally:
+        _BATCH_DASHBOARDS.pop(_dashboard_key(status), None)
         pending.pop(user_id, None)
 
 
