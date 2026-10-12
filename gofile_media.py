@@ -105,3 +105,61 @@ def download_video(video_url, download_dir, progress_callback):
         raise RuntimeError("Downloaded file is empty.")
     video.local_path = str(path)
     return video, path, quality
+
+
+
+def extract_screenshots(video_path, output_dir, count=10, duration=None):
+    """Extract evenly spaced JPEG screenshots from a downloaded video with FFmpeg."""
+    if count not in (5, 10, 15, 20):
+        raise ValueError("Screenshot quantity must be 5, 10, 15, or 20.")
+
+    video_path = Path(video_path)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        duration = float(duration or 0)
+    except (TypeError, ValueError):
+        duration = 0
+
+    if duration <= 0:
+        probe = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1", str(video_path),
+            ],
+            capture_output=True, text=True, check=True, timeout=30,
+        )
+        try:
+            duration = float(probe.stdout.strip())
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("Could not determine the video duration for screenshots.") from exc
+
+    if duration <= 0:
+        raise RuntimeError("Video duration is unavailable; cannot select screenshot positions.")
+
+    screenshots = []
+    for index in range(count):
+        # Keep frames away from the very first and last moments of the video.
+        timestamp = duration * (index + 1) / (count + 1)
+        output_path = output_dir / f"screenshot_{index + 1:03d}.jpg"
+        try:
+            subprocess.run(
+                [
+                    "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                    "-ss", f"{timestamp:.3f}", "-i", str(video_path),
+                    "-frames:v", "1", "-vf", "scale='min(1280,iw)':-2",
+                    "-q:v", "3", str(output_path),
+                ],
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                text=True, check=True, timeout=90,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            output_path.unlink(missing_ok=True)
+            raise RuntimeError(f"Could not extract screenshot {index + 1} of {count}.") from exc
+        if not output_path.exists() or output_path.stat().st_size == 0:
+            output_path.unlink(missing_ok=True)
+            raise RuntimeError(f"FFmpeg produced an empty screenshot ({index + 1} of {count}).")
+        screenshots.append(output_path)
+
+    return screenshots
