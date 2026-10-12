@@ -159,7 +159,7 @@ async def echo(bot, update):
             error_message += Translation.SET_CUSTOM_USERNAME_PASSWORD
         await chk.delete()
         
-        time.sleep(10)
+        await asyncio.sleep(10)
         await bot.send_message(
             chat_id=update.chat.id,
             text=Translation.NO_VOID_FORMAT_FOUND.format(str(error_message)),
@@ -185,9 +185,7 @@ async def echo(bot, update):
         if "formats" in response_json:
             for formats in response_json["formats"]:
                 format_id = formats.get("format_id")
-                format_string = formats.get("format_note")
-                if format_string is None:
-                    format_string = formats.get("format")
+                format_string = formats.get("format_note") or formats.get("format") or ""
                 if "DASH" in format_string.upper():
                     continue
           
