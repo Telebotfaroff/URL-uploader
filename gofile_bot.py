@@ -767,7 +767,6 @@ async def run_bulk_jobs(query, batch, mode, screenshot_count, destination="chat"
             if job_key in ACTIVE_DOWNLOADS:
                 async with results_lock:
                     failed.append((code, "already processing"))
-                    finished_count += 1
                 return
             ACTIVE_DOWNLOADS.add(job_key)
             temp_dir = tempfile.mkdtemp(prefix="gofile_bulk_")
