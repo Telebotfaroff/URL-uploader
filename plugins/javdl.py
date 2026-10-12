@@ -337,7 +337,7 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
                     url, title = queue.get_nowait()
                 except asyncio.QueueEmpty:
                     return
-                await _safe_edit(item_status, f"🧵 Queued: {title}\\n⏳ Waiting for a download slot…")
+                await _safe_edit(item_status, f"🧵 Queued: {title}\n⏳ Waiting for a download slot…")
                 try:
                     uploaded_title = await _download_and_upload(
                         bot, message.chat.id, url, "best", item_status, caption=title,
