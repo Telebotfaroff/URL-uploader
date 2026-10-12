@@ -151,6 +151,8 @@ async def ddl_call_back(bot, update):
 
     start_time = time.time()
     thumbnail = None
+    upload_cancelled = False
+    register_upload(update.from_user.id)
 
     try:
         if tg_send_type == "audio":
@@ -227,6 +229,13 @@ async def ddl_call_back(bot, update):
 
         logger.info("✅ Upload completed successfully")
 
+    except asyncio.CancelledError:
+        upload_cancelled = True
+        logger.info("Upload cancelled by user %s", update.from_user.id)
+        try:
+            await update.message.edit_caption(caption="⛔ Upload cancelled.", parse_mode=enums.ParseMode.HTML)
+        except Exception:
+            pass
     except Exception as e:
         logger.error(f"Upload failed: {e}")
         await update.message.edit_caption(
