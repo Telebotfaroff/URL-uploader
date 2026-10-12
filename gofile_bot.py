@@ -39,6 +39,34 @@ BULK_JOBS = {}
 ACTIVE_DOWNLOADS = set()
 DOWNLOAD_DIR = os.environ.get("DOWNLOAD_LOCATION", "./gofile_downloads")
 
+# Runtime-configurable parallelism; changes apply to the next bulk batch.
+PARALLEL_SETTINGS = {"downloads": 3, "uploads": 2, "screenshots": 1}
+PARALLEL_LIMITS = {"downloads": (1, 5), "uploads": (1, 3), "screenshots": (1, 2)}
+
+
+def _parallel_keyboard():
+    rows = []
+    for key, label in (("downloads", "⬇️ Downloads"), ("uploads", "☁️ Uploads"), ("screenshots", "📸 Screenshots")):
+        low, high = PARALLEL_LIMITS[key]
+        rows.append([
+            InlineKeyboardButton(
+                f"{label}: {value}{' ✓' if PARALLEL_SETTINGS[key] == value else ''}",
+                callback_data=f"par:{key}:{value}",
+            )
+            for value in range(low, high + 1)
+        ])
+    return InlineKeyboardMarkup(rows)
+
+
+def _parallel_settings_text():
+    return (
+        "⚙️ <b>Bulk parallel settings</b>\\n"
+        f"⬇️ Download workers: <b>{PARALLEL_SETTINGS['downloads']}</b> (1–5)\\n"
+        f"☁️ Upload workers: <b>{PARALLEL_SETTINGS['uploads']}</b> (1–3)\\n"
+        f"📸 Screenshot workers: <b>{PARALLEL_SETTINGS['screenshots']}</b> (1–2)\\n\\n"
+        "Changes apply to the next bulk batch. Active video jobs are capped at the download-worker setting to limit temporary storage."
+    )
+
 
 def is_owner(update):
     user = update.effective_user
@@ -185,6 +213,35 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start_command(update, context)
+
+
+async def parallel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update):
+        return
+    await update.effective_message.reply_text(
+        _parallel_settings_text(), parse_mode="HTML", reply_markup=_parallel_keyboard()
+    )
+
+
+async def parallel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not is_owner(update):
+        await query.answer("Owner only.", show_alert=True)
+        return
+    try:
+        _, key, raw_value = query.data.split(":")
+        value = int(raw_value)
+        low, high = PARALLEL_LIMITS[key]
+        if not low <= value <= high:
+            raise ValueError("out of range")
+    except (ValueError, KeyError):
+        await query.answer("Invalid parallel setting.", show_alert=True)
+        return
+    PARALLEL_SETTINGS[key] = value
+    await query.answer(f"{key.title()} workers set to {value}")
+    await query.edit_message_text(
+        _parallel_settings_text(), parse_mode="HTML", reply_markup=_parallel_keyboard()
+    )
 
 
 async def search_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -629,7 +686,7 @@ async def start_bulk_search(update, codes):
     lines = [
         "📚 <b>Bulk batch ready</b>",
         f"Found: {len(results)}/{len(codes)} video(s)",
-        "Choose one action for every found video. Jobs run sequentially to limit storage use.",
+        "Choose one action for every found video. Use /parallel to configure worker counts.",
         "",
     ]
     for row in results:
@@ -683,86 +740,150 @@ async def bulk_quantity_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def run_bulk_jobs(query, batch, mode, screenshot_count, destination="chat"):
+    rows = batch["results"]
+    total = len(rows)
+    settings = dict(PARALLEL_SETTINGS)
+    # Bound active jobs so downloaded files cannot accumulate without limit.
+    inflight_limit = asyncio.Semaphore(settings["downloads"])
+    download_limit = asyncio.Semaphore(settings["downloads"])
+    screenshot_limit = asyncio.Semaphore(settings["screenshots"])
+    upload_limit = asyncio.Semaphore(settings["uploads"])
     status = await query.message.reply_text(
-        f"⏳ Bulk job started: {len(batch['results'])} video(s). Processing one at a time."
+        f"⏳ Bulk job started: {total} video(s). Workers — "
+        f"downloads {settings['downloads']}, screenshots {settings['screenshots']}, uploads {settings['uploads']}."
     )
     completed, failed = [], []
-    for position, row in enumerate(batch["results"], 1):
+    results_lock = asyncio.Lock()
+    progress_lock = asyncio.Lock()
+    finished_count = 0
+
+    async def process_one(position, row):
+        nonlocal finished_count
         item, code = row["item"], row["requested_code"]
         job_key = (OWNER_ID, item["url"])
-        if job_key in ACTIVE_DOWNLOADS:
-            failed.append((code, "already processing"))
-            continue
-        ACTIVE_DOWNLOADS.add(job_key)
-        temp_dir = tempfile.mkdtemp(prefix="gofile_bulk_")
-        path = None
-        try:
-            await status.edit_text(f"⏳ Bulk {position}/{len(batch['results'])} — {html.escape(code)}\nMode: {html.escape(mode.upper())}")
-            loop = asyncio.get_running_loop()
-            state = {"started": time.monotonic(), "last_edit": 0.0}
+        async with inflight_limit:
+            if job_key in ACTIVE_DOWNLOADS:
+                async with results_lock:
+                    failed.append((code, "already processing"))
+                    finished_count += 1
+                return
+            ACTIVE_DOWNLOADS.add(job_key)
+            temp_dir = tempfile.mkdtemp(prefix="gofile_bulk_")
+            path = None
+            item_status = await query.message.reply_text(
+                f"⏳ <b>{position}/{total}</b> — <code>{html.escape(code)}</code> queued",
+                parse_mode="HTML",
+            )
+            try:
+                loop = asyncio.get_running_loop()
+                download_state = {"started": time.monotonic(), "last_edit": 0.0}
 
-            def download_progress(current, total, progress_mode="bytes"):
-                asyncio.run_coroutine_threadsafe(
-                    _update_transfer(status, f"⬇️ BULK {position}/{len(batch['results'])} — {code}", current, total, state, mode=progress_mode),
-                    loop,
-                )
-
-            video, path, quality = await asyncio.to_thread(download_video, item["url"], temp_dir, download_progress)
-            gofile_link = None
-            if mode in ("dl", "both"):
-                upload_state = {"started": time.monotonic(), "last_edit": 0.0}
-                def upload_progress(current, total):
+                def download_progress(current, size, progress_mode="bytes"):
                     asyncio.run_coroutine_threadsafe(
-                        _update_transfer(status, f"☁️ GOFILE {position}/{len(batch['results'])} — {code}", current, total, upload_state),
+                        _update_transfer(
+                            item_status, f"⬇️ DOWNLOAD {position}/{total} — {code}",
+                            current, size, download_state, mode=progress_mode,
+                        ),
                         loop,
                     )
-                gofile_link = await asyncio.to_thread(upload_guest, str(path), upload_progress)
 
-            screenshots = []
-            if mode in ("ss", "both"):
-                screenshots = await asyncio.to_thread(extract_screenshots, str(path), temp_dir, screenshot_count, video.duration)
+                async with download_limit:
+                    video, path, quality = await asyncio.to_thread(
+                        download_video, item["url"], temp_dir, download_progress
+                    )
 
-            title = html.escape(item.get("title") or video.title or "Video")
-            code_html = html.escape(item.get("code") or code)
-            result_lines = [f"✅ <b>{title}</b>", f"🎞 Code: <code>{code_html}</code>"]
-            if gofile_link:
-                result_lines.append(f"🔗 GoFile: <code>{html.escape(gofile_link)}</code>")
-            if screenshots:
-                result_lines.append(f"📸 Screenshots: {len(screenshots)}")
-            await query.message.reply_text("\n".join(result_lines), parse_mode="HTML")
+                gofile_link = None
+                screenshots = []
+                # Per-video order: download -> screenshots -> GoFile upload.
+                if mode in ("ss", "both"):
+                    async with screenshot_limit:
+                        await item_status.edit_text(
+                            f"📸 <b>{position}/{total}</b> — <code>{html.escape(code)}</code> extracting screenshots",
+                            parse_mode="HTML",
+                        )
+                        screenshots = await asyncio.to_thread(
+                            extract_screenshots, str(path), temp_dir, screenshot_count, video.duration
+                        )
 
-            if screenshots:
-                destination_chat_id = SCREENSHOT_CHANNEL_ID if destination == "channel" else query.message.chat_id
-                await _send_screenshot_albums(
-                    query.get_bot(), screenshots, code_html, destination_chat_id
+                if mode in ("dl", "both"):
+                    upload_state = {"started": time.monotonic(), "last_edit": 0.0}
+
+                    def upload_progress(current, size):
+                        asyncio.run_coroutine_threadsafe(
+                            _update_transfer(
+                                item_status, f"☁️ GOFILE {position}/{total} — {code}",
+                                current, size, upload_state,
+                            ),
+                            loop,
+                        )
+
+                    async with upload_limit:
+                        gofile_link = await asyncio.to_thread(upload_guest, str(path), upload_progress)
+
+                title = html.escape(item.get("title") or video.title or "Video")
+                code_html = html.escape(item.get("code") or code)
+                result_lines = [f"✅ <b>{title}</b>", f"🎞 Code: <code>{code_html}</code>"]
+                if gofile_link:
+                    result_lines.append(f"🔗 GoFile: <code>{html.escape(gofile_link)}</code>")
+                if screenshots:
+                    result_lines.append(f"📸 Screenshots: {len(screenshots)}")
+                await query.message.reply_text("\\n".join(result_lines), parse_mode="HTML")
+
+                if screenshots:
+                    destination_chat_id = SCREENSHOT_CHANNEL_ID if destination == "channel" else query.message.chat_id
+                    await _send_screenshot_albums(
+                        query.get_bot(), screenshots, code_html, destination_chat_id
+                    )
+                await item_status.edit_text(
+                    f"✅ <b>{position}/{total}</b> — <code>{html.escape(code)}</code> complete",
+                    parse_mode="HTML",
                 )
-            completed.append(code)
-        except Exception as exc:
-            LOGGER.exception("Bulk job failed for %s", code)
-            failed.append((code, str(exc)[:180]))
-            try:
-                await query.message.reply_text(f"❌ <code>{html.escape(code)}</code>: {html.escape(str(exc)[:250])}", parse_mode="HTML")
-            except Exception:
-                pass
-        finally:
-            ACTIVE_DOWNLOADS.discard(job_key)
-            if path:
+                async with results_lock:
+                    completed.append(code)
+            except Exception as exc:
+                LOGGER.exception("Bulk job failed for %s", code)
+                async with results_lock:
+                    failed.append((code, str(exc)[:180]))
                 try:
-                    path.unlink(missing_ok=True)
+                    await item_status.edit_text(
+                        f"❌ <b>{html.escape(code)}</b>: {html.escape(str(exc)[:400])}",
+                        parse_mode="HTML",
+                    )
                 except Exception:
                     pass
-            import shutil
-            shutil.rmtree(temp_dir, ignore_errors=True)
+            finally:
+                ACTIVE_DOWNLOADS.discard(job_key)
+                if path:
+                    try:
+                        path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                import shutil
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                async with progress_lock:
+                    finished_count += 1
+                    done = finished_count
+                    try:
+                        await status.edit_text(
+                            f"⏳ Bulk progress: {done}/{total} finished\\n"
+                            f"⬇️ Downloads: {settings['downloads']} • 📸 Screenshots: {settings['screenshots']} • ☁️ Uploads: {settings['uploads']}"
+                        )
+                    except Exception:
+                        pass
+
+    await asyncio.gather(*(process_one(i, row) for i, row in enumerate(rows, 1)))
     summary = [
         "🏁 <b>Bulk job finished</b>",
         f"Mode: {html.escape(mode.upper())}",
         f"Successful: {len(completed)}",
         f"Failed/skipped: {len(failed)}",
+        f"Parallel workers used — downloads: {settings['downloads']}, screenshots: {settings['screenshots']}, uploads: {settings['uploads']}",
     ]
     if failed:
-        summary.append("Failures: " + ", ".join(f"{html.escape(code)} ({html.escape(reason)})" for code, reason in failed[:10]))
-    await status.edit_text("\n".join(summary), parse_mode="HTML")
-
+        summary.append("Failures: " + ", ".join(
+            f"{html.escape(code)} ({html.escape(reason)})" for code, reason in failed[:10]
+        ))
+    await status.edit_text("\\n".join(summary), parse_mode="HTML")
 
 async def unknown_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_owner(update):
@@ -779,6 +900,8 @@ def main():
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("parallel", parallel_command))
+    application.add_handler(CallbackQueryHandler(parallel_callback, pattern=r"^par:"))
     application.add_handler(CallbackQueryHandler(search_navigation, pattern=r"^p:"))
     application.add_handler(CallbackQueryHandler(download_callback, pattern=r"^d:"))
     application.add_handler(CallbackQueryHandler(screenshot_quantity_callback, pattern=r"^ss:"))
