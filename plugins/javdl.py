@@ -834,7 +834,7 @@ async def javdl_callback(bot, query):
         if state.get("processing"):
             return await query.answer("A batch is already running.", show_alert=True)
         cycle = {"safe": "balanced", "balanced": "fast", "fast": "safe"}
-        state["speed"] = cycle.get(state.get("speed", DEFAULT_PARALLEL_SPEED), "balanced")
+        state["speed"] = cycle.get(state.get("speed", DEFAULT_PARALLEL_SPEED), DEFAULT_PARALLEL_SPEED)
         await query.answer(f"Speed mode: {state['speed'].title()}")
         return await query.message.edit_reply_markup(
             reply_markup=_channel_keyboard(state.get("skip_uploaded", True), state["speed"])
