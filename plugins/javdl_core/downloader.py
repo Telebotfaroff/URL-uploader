@@ -1,6 +1,7 @@
 from pathlib import Path
 import re
 import subprocess
+import time
 import requests
 
 from .quality import choose_quality
@@ -22,7 +23,8 @@ class Downloader:
     def download(self, video, quality="best", progress=None):
         selected, url = choose_quality(video.qualities, quality)
         video.selected_quality = selected
-        path = self.workdir / (self._filename(video.title, selected) + ".mp4")
+        # A unique path prevents parallel jobs with the same title/quality overwriting each other.
+        path = self.workdir / (self._filename(video.title, selected) + f"_{time.time_ns()}.mp4")
 
         headers = {"User-Agent": self.USER_AGENT}
         if video.source_url:
