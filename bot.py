@@ -1,10 +1,11 @@
+import asyncio
 import os
 import logging
 
-from pyrogram import Client, StopPropagation, enums, filters
+from pyrogram import Client, StopPropagation, enums, filters, idle
 from pyrogram.handlers import CallbackQueryHandler, MessageHandler
 
-from plugins.config import Config
+from plugins.config import Config, configure_upload_clients
 
 logging.basicConfig(
     level=logging.INFO,
@@ -73,11 +74,33 @@ if __name__ == "__main__":
         sleep_threshold=300,
         plugins=dict(root="plugins"),
     )
+    # A second MTProto connection with the same bot identity is used only for
+    # uploads. no_updates=True prevents it from competing for incoming updates.
+    upload_client = Client(
+        "URLUploaderBotUpload2",
+        bot_token=Config.BOT_TOKEN,
+        api_id=Config.API_ID,
+        api_hash=Config.API_HASH,
+        sleep_threshold=300,
+        no_updates=True,
+    )
+    configure_upload_clients([app, upload_client])
 
     # Group -1 runs before plugin handlers, so unauthorized messages and
     # callback queries never reach downloader, settings, or admin handlers.
     app.add_handler(MessageHandler(owner_only_message, filters.all), group=-1)
     app.add_handler(CallbackQueryHandler(owner_only_callback), group=-1)
 
-    print("Private bot is running.")
-    app.run()
+    async def run_clients():
+        await app.start()
+        try:
+            await upload_client.start()
+            print("Private bot is running with 2 upload sessions.")
+            await idle()
+        finally:
+            if upload_client.is_connected:
+                await upload_client.stop()
+            if app.is_connected:
+                await app.stop()
+
+    asyncio.run(run_clients())
