@@ -83,6 +83,17 @@ class Database:
                             value TEXT NOT NULL
                         )
                     """)
+                    await conn.execute("""
+                        CREATE TABLE IF NOT EXISTS batch_queue (
+                            user_id BIGINT PRIMARY KEY,
+                            listing_url TEXT NOT NULL,
+                            listing_type TEXT NOT NULL DEFAULT 'channel',
+                            all_pages BOOLEAN NOT NULL DEFAULT TRUE,
+                            speed TEXT NOT NULL DEFAULT 'balanced',
+                            status TEXT NOT NULL DEFAULT 'queued',
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                    """)
                 self._schema_ready = True
         return pool
 
@@ -201,6 +212,26 @@ class Database:
             str(key),
             str(value),
         )
+
+    async def save_batch_checkpoint(self, user_id, listing_url, listing_type="channel", all_pages=True, speed="balanced", status="queued"):
+        pool = await self._ensure_schema()
+        await pool.execute(
+            """INSERT INTO batch_queue (user_id, listing_url, listing_type, all_pages, speed, status, updated_at)
+               VALUES ($1, $2, $3, $4, $5, $6, NOW())
+               ON CONFLICT (user_id) DO UPDATE SET listing_url = EXCLUDED.listing_url,
+                 listing_type = EXCLUDED.listing_type, all_pages = EXCLUDED.all_pages,
+                 speed = EXCLUDED.speed, status = EXCLUDED.status, updated_at = NOW()""",
+            int(user_id), str(listing_url), str(listing_type), bool(all_pages), str(speed), str(status),
+        )
+
+    async def get_batch_checkpoint(self, user_id):
+        pool = await self._ensure_schema()
+        row = await pool.fetchrow("SELECT * FROM batch_queue WHERE user_id = $1", int(user_id))
+        return dict(row) if row else None
+
+    async def clear_batch_checkpoint(self, user_id):
+        pool = await self._ensure_schema()
+        await pool.execute("DELETE FROM batch_queue WHERE user_id = $1", int(user_id))
 
     async def is_channel_video_uploaded(self, canonical_url):
         pool = await self._ensure_schema()
