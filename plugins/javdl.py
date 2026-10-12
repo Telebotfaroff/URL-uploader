@@ -74,7 +74,7 @@ def _load_saved_channel_urls_sync():
     found = []
     seen = set()
     pattern = re.compile(
-        r"(?:https?://)?(?:www\\.)?javtiful\\.com/channel/[^\\s<>\\\"'\x60]+",
+        r"(?:https?://)?(?:www\.)?javtiful\.com/channel/[^\s<>""'\x60]+",
         re.IGNORECASE,
     )
     for item in candidates:
@@ -93,7 +93,7 @@ def _load_saved_channel_urls_sync():
             logger.warning("Could not read saved channel list file: %s", path, exc_info=True)
             continue
         for match in pattern.findall(content):
-            url = match.rstrip(".,;:!?)\\]}\\u2019\\u201d")
+            url = match.rstrip(".,;:!?)]}'’”")
             if not url.lower().startswith(("http://", "https://")):
                 url = "https://" + url
             if _valid_url(url, "/channel/"):
