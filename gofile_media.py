@@ -3,7 +3,7 @@ import re
 import subprocess
 import time
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urljoin
 
 import requests
 
@@ -34,6 +34,7 @@ def download_video(video_url, download_dir, progress_callback):
     if not video.qualities:
         raise RuntimeError("Javtiful did not expose a downloadable media stream for this video.")
     quality, media_url = _pick_quality(video.qualities)
+    media_url = urljoin(video_url, media_url)
     os.makedirs(download_dir, exist_ok=True)
     path = Path(download_dir) / (f"{_safe_name(video.title)}_{time.time_ns()}.mp4")
     headers = dict(HEADERS)
