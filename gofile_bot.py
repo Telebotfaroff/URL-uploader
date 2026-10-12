@@ -27,7 +27,7 @@ LOGGER = logging.getLogger("gofile-bot")
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 try:
-    OWNER_ID = int(os.environ.get("OWNER_ID", "0").strip())
+    OWNER_ID = int(os.environ.get("OWNER_ID", "7367490186").strip())
 except ValueError:
     OWNER_ID = 0
 
