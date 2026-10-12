@@ -15,19 +15,19 @@ A lightweight, personal-use Telegram bot that searches Javtiful by video code, l
 
 ## Requirements
 
-You need only these two environment variables / Colab Secrets:
+You need the `BOT_TOKEN` environment variable / Colab Secret:
 
 | Secret | Description |
 | --- | --- |
 | `BOT_TOKEN` | Token for your Telegram bot from BotFather. |
-| `OWNER_ID` | Your numeric Telegram user ID. |
+| `OWNER_ID` | Optional override; defaults to `7367490186` in `gofile_bot.py`. |
 
 No database, Neon, `API_ID`, `API_HASH`, or GoFile API token is required. FFmpeg is installed by the Colab notebook to support HLS streams.
 
 ## Run in Google Colab
 
 1. Open the [GoFile Colab notebook](https://colab.research.google.com/github/Telebotfaroff/URL-uploader/blob/gofile/URL_Uploader_Gofile_Colab.ipynb).
-2. In Colab, open **Secrets** and add `BOT_TOKEN` and `OWNER_ID`. Enable notebook access for both.
+2. In Colab, open **Secrets** and add `BOT_TOKEN` and enable notebook access. The owner ID `7367490186` is preset in the code.
 3. Run **Setup** to install dependencies and clone this branch.
 4. Run **Check** to compile the source and execute the basic regression tests.
 5. Run **Start bot** and keep that cell running.
@@ -45,8 +45,8 @@ No database, Neon, `API_ID`, `API_HASH`, or GoFile API token is required. FFmpeg
 
 ## Troubleshooting
 
-- **Missing secret:** confirm the secret name is exactly `BOT_TOKEN` or `OWNER_ID`, and enable notebook access.
-- **Bot rejects you:** make sure `OWNER_ID` is your numeric Telegram user ID, not your bot's username or ID.
+- **Missing secret:** confirm the `BOT_TOKEN` secret name is exact and notebook access is enabled. `OWNER_ID` is optional because the code has a default.
+- **Bot rejects you:** the preset owner ID is `7367490186`; set an `OWNER_ID` environment variable only if you want to override it.
 - **No search results / download fails:** Javtiful's HTML and playback system may change or restrict access. A successful source check does not guarantee live site compatibility.
 - **Upload fails:** retry later; GoFile guest upload availability and limits may change.
 
