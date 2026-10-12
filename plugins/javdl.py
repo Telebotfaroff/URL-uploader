@@ -560,8 +560,6 @@ async def javtiful_channel_command(bot, message):
             "total_videos": info.get("total_videos"),
             "first_page": {"items": info.get("first_page_items") or []},
             "skip_uploaded": True,
-            "speed": "balanced",
-            "listing_type": "channel",
         }
         pending[message.from_user.id] = state
         count = info.get("total_videos")
