@@ -960,9 +960,12 @@ async def custom_page_number_message(bot, message):
         return
 
     value = (message.text or "").strip()
+    if value.lower() in {"/cancel", ".cancel"}:
+        state["awaiting_custom_page"] = False
+        return await message.reply_text("✅ Custom page selection cancelled.")
     if not value.isdigit():
         return await message.reply_text(
-            f"Send a page number from 1 to {state.get('total_pages', 1)}, or send /cancel."
+            f"Send a page number from 1 to {min(int(state.get('total_pages') or 1), MAX_CHANNEL_PAGES)}, or send /cancel."
         )
     page_number = int(value)
     total_pages = max(1, min(int(state.get("total_pages") or 1), MAX_CHANNEL_PAGES))
