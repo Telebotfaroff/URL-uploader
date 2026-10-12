@@ -66,34 +66,37 @@ if __name__ == "__main__":
 
     os.makedirs(Config.DOWNLOAD_LOCATION, exist_ok=True)
 
-    app = Client(
-        "URLUploaderBot",
-        bot_token=Config.BOT_TOKEN,
-        api_id=Config.API_ID,
-        api_hash=Config.API_HASH,
-        sleep_threshold=300,
-        plugins=dict(root="plugins"),
-    )
-    # A second MTProto connection with the same bot identity is used only for
-    # uploads. no_updates=True prevents it from competing for incoming updates.
-    upload_client = Client(
-        "URLUploaderBotUpload2",
-        bot_token=Config.BOT_TOKEN,
-        api_id=Config.API_ID,
-        api_hash=Config.API_HASH,
-        sleep_threshold=300,
-        no_updates=True,
-    )
-    configure_upload_clients([app, upload_client])
-
-    # Group -1 runs before plugin handlers, so unauthorized messages and
-    # callback queries never reach downloader, settings, or admin handlers.
-    app.add_handler(MessageHandler(owner_only_message, filters.all), group=-1)
-    app.add_handler(CallbackQueryHandler(owner_only_callback), group=-1)
-
     async def run_clients():
-        await app.start()
+        # Construct Pyrogram clients inside the running asyncio loop. Creating
+        # them before asyncio.run() can bind their storage executor to another
+        # loop and cause "Future attached to a different loop" on Colab.
+        app = Client(
+            "URLUploaderBot",
+            bot_token=Config.BOT_TOKEN,
+            api_id=Config.API_ID,
+            api_hash=Config.API_HASH,
+            sleep_threshold=300,
+            plugins=dict(root="plugins"),
+        )
+        # A second MTProto connection with the same bot identity is used only
+        # for uploads. no_updates=True prevents it from competing for updates.
+        upload_client = Client(
+            "URLUploaderBotUpload2",
+            bot_token=Config.BOT_TOKEN,
+            api_id=Config.API_ID,
+            api_hash=Config.API_HASH,
+            sleep_threshold=300,
+            no_updates=True,
+        )
+        configure_upload_clients([app, upload_client])
+
+        # Group -1 runs before plugin handlers, so unauthorized messages and
+        # callback queries never reach downloader, settings, or admin handlers.
+        app.add_handler(MessageHandler(owner_only_message, filters.all), group=-1)
+        app.add_handler(CallbackQueryHandler(owner_only_callback), group=-1)
+
         try:
+            await app.start()
             await upload_client.start()
             print("Private bot is running with 2 upload sessions.")
             await idle()
