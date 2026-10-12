@@ -57,6 +57,11 @@ def _bar(current, total, width=12):
 def _transfer_text(phase, current, total, state, mode="bytes"):
     now = time.monotonic()
     elapsed = max(now - state.setdefault("started", now), 0.1)
+    if mode == "count":
+        percent = min(100, int(current * 100 / total)) if total > 0 else 0
+        filled = min(12, percent * 12 // 100)
+        bar = "█" * filled + "░" * (12 - filled)
+        return f"{phase}\\n{bar} {percent}%\\n🖼️ Uploaded {current}/{total} images"
     if mode == "time" and total > 0:
         percent = min(100, int(current * 100 / total))
         filled = min(12, percent * 12 // 100)
@@ -699,7 +704,7 @@ async def start_bulk_search(update, codes):
         "",
     ]
     for row in results:
-        lines.append(f"• <code>{html.escape(row['requested_code'])}</code> — {html.escape(row['item'].get('title') or 'Video')}")
+        lines.append(f"• <code>{html.escape(row['requested_code'])}</code> — {html.escape((row['item'].get('title') or 'Video')[:100])}")
     if missing:
         lines.extend(["", "Not found: " + ", ".join(html.escape(code) for code in missing)])
     await status.edit_text("\n".join(lines), parse_mode="HTML", reply_markup=_bulk_keyboard(bulk_id))
