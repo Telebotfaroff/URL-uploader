@@ -22,7 +22,7 @@ class Translation(object):
 /resume — Resume a saved channel/actress batch after a restart
 /setdump — View dump-channel setting (owner only)
 /setdump &lt;@channel or ID&gt; — Set the dump channel
-/setdump off — Disable dump-channel uploads
+/setdumpoff — Disable dump-channel uploads (no arguments needed)\n/setdump off — Also disables dump-channel uploads
 </blockquote>
 
 <b>📤 Upload a file</b>
