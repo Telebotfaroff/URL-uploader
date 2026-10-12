@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 import re
@@ -267,12 +268,15 @@ def _quality_keyboard(qualities):
     return InlineKeyboardMarkup(rows)
 
 
-def _channel_keyboard(skip_uploaded=True):
+def _channel_keyboard(skip_uploaded=True, speed="balanced"):
+    profiles = {"safe": (1, 1), "balanced": (2, 2), "fast": (3, 3)}
+    down, up = profiles.get(speed, profiles["balanced"])
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(
             f"⏭️ Skip already uploaded: {'ON' if skip_uploaded else 'OFF'}",
             callback_data="javdl|skip_toggle",
         )],
+        [InlineKeyboardButton(f"⚙️ Speed: {speed.title()} ({down}↓/{up}↑)", callback_data="javdl|speed")],
         [InlineKeyboardButton("⬇️ Download first page", callback_data="javdl|page")],
         [InlineKeyboardButton("📥 Download all videos", callback_data="javdl|all")],
     ])
@@ -283,9 +287,12 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
     uploaded = failed = skipped = already_uploaded = 0
     seen = set()
     skip_uploaded = bool(state.get("skip_uploaded", True))
-    download_semaphore = asyncio.Semaphore(2)
-    upload_semaphore = asyncio.Semaphore(2)
-    worker_count = 4
+    profiles = {"safe": (1, 1), "balanced": (2, 2), "fast": (3, 3)}
+    speed = state.get("speed", "balanced")
+    download_limit, upload_limit = profiles.get(speed, profiles["balanced"])
+    download_semaphore = asyncio.Semaphore(download_limit)
+    upload_semaphore = asyncio.Semaphore(upload_limit)
+    worker_count = download_limit + upload_limit
     try:
         total_pages = max(1, min(int(state.get("total_pages") or 1), MAX_CHANNEL_PAGES))
         pages = range(total_pages) if all_pages else range(1)
@@ -325,7 +332,22 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
                 f"🏁 Nothing to upload.\n\n📺 {state.get('channel_name', 'Channel')}\n"
                 f"⏭️ Skipped: {skipped} (already uploaded: {already_uploaded})"
             )
+            try:
+                await db.set_setting(f"batch_resume_{user_id}", None)
+                await db.clear_batch_checkpoint(user_id)
+            except Exception:
+                logger.exception("Could not clear completed batch checkpoint")
             return
+        try:
+            checkpoint = {
+                "url": state["url"], "type": state.get("listing_type", "channel"),
+                "all_pages": bool(all_pages), "skip_uploaded": skip_uploaded,
+                "speed": speed, "channel_name": state.get("channel_name", "Listing"),
+            }
+            await db.set_setting(f"batch_resume_{user_id}", json.dumps(checkpoint))
+            await db.save_batch_checkpoint(user_id, state["url"], checkpoint["type"], all_pages, speed, "running")
+        except Exception:
+            logger.exception("Could not persist batch checkpoint")
         queue = asyncio.Queue()
         for job in jobs:
             queue.put_nowait(job)
@@ -339,11 +361,20 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
                     return
                 await _safe_edit(item_status, f"🧵 Queued: {title}\n⏳ Waiting for a download slot…")
                 try:
-                    uploaded_title = await _download_and_upload(
-                        bot, message.chat.id, url, "best", item_status, caption=title,
-                        download_semaphore=download_semaphore,
-                        upload_semaphore=upload_semaphore,
-                    )
+                    uploaded_title = None
+                    for attempt in range(1, 4):
+                        try:
+                            uploaded_title = await _download_and_upload(
+                                bot, message.chat.id, url, "best", item_status, caption=title,
+                                download_semaphore=download_semaphore,
+                                upload_semaphore=upload_semaphore,
+                            )
+                            break
+                        except Exception:
+                            if attempt >= 3:
+                                raise
+                            await _safe_edit(item_status, f"🔁 Retry {attempt}/2: {title}")
+                            await asyncio.sleep(attempt * 2)
                     try:
                         await db.record_channel_upload(_canonical_video_url(url), url, uploaded_title or title)
                     except Exception:
@@ -358,21 +389,58 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
                     queue.task_done()
                     await _safe_edit(
                         status,
-                        f"⚙️ Parallel channel processing\n\n📺 {state.get('channel_name', 'Channel')}\n"
-                        f"📦 Queued: {len(jobs)}\n⬇️ Max concurrent downloads: 2\n📤 Max concurrent uploads: 2\n\n"
+                        f"📊 Batch dashboard • {speed.title()} mode\n\n📺 {state.get('channel_name', 'Channel')}\n"
+                        f"📦 Waiting: {queue.qsize()} / {len(jobs)} total\n⬇️ Max downloads: {download_limit}\n📤 Max uploads: {upload_limit}\n🔁 Up to 2 retries per video\n\n"
                         f"✅ Uploaded: {uploaded}\n⏭️ Skipped: {skipped} (already uploaded: {already_uploaded})\n❌ Failed: {failed}"
                     )
         await asyncio.gather(*(worker() for _ in range(min(worker_count, len(jobs)))))
         await status.edit_text(
-            f"🏁 Channel processing finished\n\n📺 {state.get('channel_name', 'Channel')}\n"
+            f"🏁 Listing processing finished\n\n📺 {state.get('channel_name', 'Channel')}\n"
             f"✅ Uploaded: {uploaded}\n⏭️ Skipped: {skipped} (already uploaded: {already_uploaded})\n❌ Failed: {failed}\n"
             f"📄 Pages scanned: {min(total_pages, len(pages) if hasattr(pages, '__len__') else total_pages)}\n"
-            "⚙️ Parallel limits: 2 downloads + 2 uploads"
+            f"⚙️ Mode: {speed.title()} • {download_limit} downloads + {upload_limit} uploads"
         )
+        if failed == 0:
+            try:
+                await db.set_setting(f"batch_resume_{user_id}", None)
+                await db.clear_batch_checkpoint(user_id)
+            except Exception:
+                logger.exception("Could not clear completed batch checkpoint")
     except Exception as exc:
         await _safe_edit(status, f"❌ Channel processing failed\n{type(exc).__name__}: {str(exc)[:700]}")
     finally:
         pending.pop(user_id, None)
+
+@Client.on_message(filters.private & filters.command(["resume"], ["/", "."]))
+async def resume_batch_command(bot, message):
+    if not message.from_user:
+        return
+    user_id = message.from_user.id
+    try:
+        saved = await db.get_setting(f"batch_resume_{user_id}")
+        data = json.loads(saved) if saved else None
+    except Exception as exc:
+        logger.exception("Could not read saved batch")
+        return await message.reply_text(f"❌ Could not read saved batch: {type(exc).__name__}. Check DATABASE_URL.")
+    if not data:
+        return await message.reply_text("ℹ️ No saved batch found. Start one with /channel or /actress.")
+    status = await message.reply_text("🔄 Restoring saved listing…")
+    try:
+        info = await asyncio.to_thread(channel_extractor.inspect, data["url"])
+        state = {
+            "type": "channel", "listing_type": data.get("type", "channel"),
+            "url": data["url"], "channel_name": info.get("channel_name") or data.get("channel_name", "Listing"),
+            "total_pages": max(1, int(info.get("total_pages") or 1)),
+            "total_videos": info.get("total_videos"),
+            "first_page": {"items": info.get("first_page_items") or []},
+            "skip_uploaded": True, "speed": data.get("speed", "balanced"),
+        }
+        pending[user_id] = state
+        await status.edit_text("🔄 Resuming saved batch. Upload history will skip completed videos.")
+        await _process_channel(bot, message, state, user_id, all_pages=bool(data.get("all_pages", True)))
+    except Exception as exc:
+        logger.exception("Could not resume saved batch")
+        await _safe_edit(status, f"❌ Resume failed: {type(exc).__name__}: {str(exc)[:500]}")
 
 @Client.on_message(filters.private & filters.command(["setdump"], ["/", "."]))
 async def set_dump_command(bot, message):
@@ -484,12 +552,16 @@ async def javtiful_channel_command(bot, message):
         total_pages = max(1, int(info.get("total_pages") or 1))
         state = {
             "type": "channel",
+            "listing_type": "channel",
+            "speed": "balanced",
             "url": url,
             "channel_name": info.get("channel_name") or "Channel",
             "total_pages": total_pages,
             "total_videos": info.get("total_videos"),
             "first_page": {"items": info.get("first_page_items") or []},
             "skip_uploaded": True,
+            "speed": "balanced",
+            "listing_type": "channel",
         }
         pending[message.from_user.id] = state
         count = info.get("total_videos")
@@ -499,7 +571,7 @@ async def javtiful_channel_command(bot, message):
             f"📄 Pages: {total_pages}\n"
             f"📌 First-page entries: {len(state['first_page']['items'])}\n\n"
             "Choose what to process:",
-            reply_markup=_channel_keyboard(state.get("skip_uploaded", True)),
+            reply_markup=_channel_keyboard(state.get("skip_uploaded", True), state.get("speed", "balanced")),
         )
     except Exception as exc:
         logger.exception("JAVDL channel inspection failed")
@@ -526,6 +598,9 @@ async def actress_command(bot, message):
             "total_videos": info.get("total_videos"),
             "first_page": {"items": info.get("first_page_items") or []},
         }
+        state["speed"] = "balanced"
+        state["listing_type"] = "actress"
+        state["skip_uploaded"] = True
         pending[message.from_user.id] = state
         count = info.get("total_videos")
         await status.edit_text(
@@ -534,7 +609,7 @@ async def actress_command(bot, message):
             f"📄 Pages: {total_pages}\n"
             f"📌 First-page entries: {len(state['first_page']['items'])}\n\n"
             "Choose what to process:",
-            reply_markup=_channel_keyboard(),
+            reply_markup=_channel_keyboard(state.get("skip_uploaded", True), state.get("speed", "balanced")),
         )
     except Exception as exc:
         logger.exception("Javtiful actress listing inspection failed")
@@ -567,6 +642,18 @@ async def javdl_callback(bot, query):
             logger.exception("JAVDL video download/upload failed")
             await _safe_edit(query.message, f"❌ Download/upload failed\n{type(exc).__name__}: {str(exc)[:700]}")
         return
+
+    if action[1] == "speed":
+        if state.get("type") != "channel":
+            return await query.answer("This listing selection has expired.", show_alert=True)
+        if state.get("processing"):
+            return await query.answer("A batch is already running.", show_alert=True)
+        cycle = {"safe": "balanced", "balanced": "fast", "fast": "safe"}
+        state["speed"] = cycle.get(state.get("speed", "balanced"), "balanced")
+        await query.answer(f"Speed mode: {state['speed'].title()}")
+        return await query.message.edit_reply_markup(
+            reply_markup=_channel_keyboard(state.get("skip_uploaded", True), state["speed"])
+        )
 
     if action[1] == "skip_toggle":
         if state.get("type") != "channel":
