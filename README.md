@@ -1,24 +1,55 @@
 # Javtiful → GoFile Telegram Bot
 
-A minimal, owner-only Telegram bot that searches Javtiful by video code, downloads a selected result, and uploads it to GoFile as a guest.
+A lightweight, personal-use Telegram bot that searches Javtiful by video code, lets you browse matching results, downloads the selected video, and uploads it to GoFile using guest upload.
 
-## Required secrets
+> Only download and upload content you own or are authorized to handle. Use this bot privately and comply with the source site's terms and applicable law.
 
-- `BOT_TOKEN` — Telegram bot token.
-- `OWNER_ID` — your numeric Telegram user ID.
+## Features
 
-No database, Neon, `API_ID`, `API_HASH`, or GoFile token is required.
+- Search Javtiful using codes such as `HNTRZ-010`.
+- Browse matching results with thumbnails and Previous/Next buttons.
+- Download a selected result and upload it to GoFile without a GoFile account token.
+- Show download/upload progress, transfer speed, and ETA when available.
+- Restrict bot commands and button callbacks to your Telegram user ID.
+- Keep search sessions in memory only; no database or persistent history.
+
+## Requirements
+
+You need only these two environment variables / Colab Secrets:
+
+| Secret | Description |
+| --- | --- |
+| `BOT_TOKEN` | Token for your Telegram bot from BotFather. |
+| `OWNER_ID` | Your numeric Telegram user ID. |
+
+No database, Neon, `API_ID`, `API_HASH`, or GoFile API token is required. FFmpeg is installed by the Colab notebook to support HLS streams.
 
 ## Run in Google Colab
 
-Open `URL_Uploader_Gofile_Colab.ipynb`, add the two secrets above to Colab Secrets, enable notebook access, and run the cells in order.
+1. Open the [GoFile Colab notebook](https://colab.research.google.com/github/Telebotfaroff/URL-uploader/blob/gofile/URL_Uploader_Gofile_Colab.ipynb).
+2. In Colab, open **Secrets** and add `BOT_TOKEN` and `OWNER_ID`. Enable notebook access for both.
+3. Run **Setup** to install dependencies and clone this branch.
+4. Run **Check** to compile the source and execute the basic regression tests.
+5. Run **Start bot** and keep that cell running.
+6. Open your bot in Telegram and send a video code, for example `HNTRZ-010`. Choose a result, then press Download.
 
-## Included features
+## Project files
 
-- Search results with thumbnails and previous/next navigation.
-- Download and guest-upload buttons.
-- Download/upload progress, speed, and ETA when available.
-- Owner-only commands and callbacks.
-- In-memory search sessions; no database or persistent history.
+- `gofile_bot.py` — Telegram handlers, owner checks, buttons, and progress updates.
+- `gofile_search.py` — Javtiful code search, result parsing, and pagination.
+- `gofile_media.py` — video extraction and downloading.
+- `gofile_uploader.py` — GoFile guest upload.
+- `plugins/javdl_core/` — Javtiful media extraction components.
+- `URL_Uploader_Gofile_Colab.ipynb` — setup, checks, and run cells.
+- `tests/test_gofile_bot.py` — basic regression tests.
 
-Javtiful may change its site or playback format, so verify live search/download behavior in Colab. Source checks do not prove that the live integration works.
+## Troubleshooting
+
+- **Missing secret:** confirm the secret name is exactly `BOT_TOKEN` or `OWNER_ID`, and enable notebook access.
+- **Bot rejects you:** make sure `OWNER_ID` is your numeric Telegram user ID, not your bot's username or ID.
+- **No search results / download fails:** Javtiful's HTML and playback system may change or restrict access. A successful source check does not guarantee live site compatibility.
+- **Upload fails:** retry later; GoFile guest upload availability and limits may change.
+
+## Scope
+
+This branch is intentionally separate from `main` and contains only the files required for the GoFile bot. Search sessions are temporary and disappear when the process restarts. The bot does not save a database or persistent search history.
