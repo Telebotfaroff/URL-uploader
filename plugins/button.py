@@ -90,8 +90,8 @@ async def youtube_dl_call_back(bot, update):
                 l = entity.length
                 youtube_dl_url = youtube_dl_url[o:o + l]
 
-    custom_file_name = os.path.basename(str(custom_file_name).replace("\\\\", "/").strip())
-    custom_file_name = re.sub(r"[\\x00-\\x1f]", "_", custom_file_name) or "download.bin"
+    custom_file_name = os.path.basename(str(custom_file_name).replace("\\", "/").strip())
+    custom_file_name = re.sub(r"[\x00-\x1f]", "_", custom_file_name) or "download.bin"
 
     await update.message.edit_caption(
         caption=Translation.DOWNLOAD_START.format(custom_file_name)
