@@ -154,7 +154,6 @@ async def search_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_owner(update):
         await query.answer("Owner only.", show_alert=True)
         return
-    await query.answer()
     try:
         _, search_id, raw_index = query.data.split(":")
         index = int(raw_index)
@@ -166,6 +165,7 @@ async def search_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("This search has expired. Send the code again.", show_alert=True)
         return
 
+    await query.answer()
     caption = _caption(item, index, len(session["items"]))
     keyboard = _keyboard(search_id, index, len(session["items"]))
     try:
