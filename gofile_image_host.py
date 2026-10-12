@@ -5,7 +5,7 @@ from pathlib import Path
 
 import requests
 
-API_URL = "https://freeimage.host/api/1/upload/"
+API_URL = "https://freeimage.host/api/1/upload"
 
 
 def upload_images(image_paths, api_key=None, progress_callback=None):
@@ -41,7 +41,15 @@ def upload_images(image_paths, api_key=None, progress_callback=None):
                     payload.get("status_code") not in (None, 200)
                     or success.get("code") not in (None, 200)
                 ):
-                    message = (success.get("message") or payload.get("error", {}).get("message") or payload.get("status_txt") or f"unexpected response (status_code={payload.get('status_code')!r}, success_code={success.get('code')!r})")
+                    api_error = payload.get("error")
+                    if isinstance(api_error, dict):
+                        api_error = api_error.get("message")
+                    message = (
+                        success.get("message")
+                        or api_error
+                        or payload.get("status_txt")
+                        or f"unexpected response (status_code={payload.get('status_code')!r}, success_code={success.get('code')!r})"
+                    )
                     raise RuntimeError(f"Freeimage.host rejected {path.name}: {message}")
                 uploaded.append({
                     "url": image["url"],
