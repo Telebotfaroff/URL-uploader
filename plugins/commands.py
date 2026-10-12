@@ -80,7 +80,7 @@ async def add_caption_help(bot, update):
     )
 
 
-@Client.on_callback_query(filters.regex(r"^cancel_download\\+"))
+@Client.on_callback_query(filters.regex(r"^cancel_download\+"))
 async def cancel_cb(c, m):
     raw_user_id = m.data.split("+", 1)[1]
     if raw_user_id == "unknown":
