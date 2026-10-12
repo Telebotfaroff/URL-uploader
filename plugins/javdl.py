@@ -210,19 +210,29 @@ def _dashboard_key(message):
 
 
 def _format_active_transfer(item):
-    title = str(item.get("title") or "Video")[:72]
+    # Keep the title and telemetry on separate short lines for easier scanning
+    # in Telegram, especially on narrow phone screens.
+    title = str(item.get("title") or "Video").replace("\\n", " ").strip()
+    if len(title) > 48:
+        title = title[:45].rstrip() + "..."
     current = max(0, int(item.get("current") or 0))
     total = max(0, int(item.get("total") or 0))
     now = time.monotonic()
     elapsed = max(now - item.get("started", now), 0.001)
     speed = current / elapsed
     percent = min(100, int(current * 100 / total)) if total else 0
-    eta = "—"
-    if total and speed > 0:
-        remaining = max(0, total - current) / speed
-        eta = f"{int(remaining // 60):02d}:{int(remaining % 60):02d}"
-    size = f"{current / (1024 * 1024):.1f}/{total / (1024 * 1024):.1f} MB" if total else f"{current / (1024 * 1024):.1f} MB"
-    return f"• {title} — {percent}% • {size} • {speed / (1024 * 1024):.2f} MB/s • ETA {eta}"
+    filled = min(8, int(percent / 12.5))
+    bar = "█" * filled + "░" * (8 - filled)
+    if total:
+        eta = "—"
+        if speed > 0 and current < total:
+            remaining = max(0, total - current) / speed
+            eta = f"{int(remaining // 60):02d}:{int(remaining % 60):02d}"
+        size = f"{current / (1024 * 1024):.0f}/{total / (1024 * 1024):.0f} MB"
+        details = f"  {bar} {percent:3d}%  •  {size}  •  {speed / (1024 * 1024):.1f} MB/s  •  ETA {eta}"
+    else:
+        details = "  Preparing transfer..."
+    return f"• {title}\\n{details}"
 
 
 async def _dashboard_refresh(status, force=False):
