@@ -3,6 +3,7 @@ hachoir
 numpy
 Pillow
 requests
+beautifulsoup4>=4.12.0
 tgcryptos
 olefile
 asyncpg>=0.29,<1.0
