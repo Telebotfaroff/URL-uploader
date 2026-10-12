@@ -115,11 +115,56 @@ def _duration_text(value):
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes:02d}:{seconds:02d}"
 
 
-async def _safe_edit(message, text):
+# Telegram edit throttling: limit updates per message and across the chat.
+EDIT_MIN_INTERVAL = 1.2
+PROGRESS_MIN_INTERVAL = 5.0
+_edit_last_at = {}
+_edit_last_text = {}
+_chat_edit_at = {}
+_chat_edit_locks = {}
+
+
+async def _safe_edit(message, text, force=None):
+    """Edit status messages without flooding Telegram; prioritize final states."""
+    chat_id = getattr(getattr(message, "chat", None), "id", None)
+    message_id = getattr(message, "id", getattr(message, "message_id", None))
+    key = (chat_id, message_id)
+    if force is None:
+        force = str(text).startswith(("✅", "❌", "⚠️", "🏁", "🔄"))
+    if _edit_last_text.get(key) == text:
+        return
+
+    lock = _chat_edit_locks.setdefault(chat_id, asyncio.Lock())
     try:
-        await message.edit_text(text)
+        async with lock:
+            now = time.monotonic()
+            if _edit_last_text.get(key) == text:
+                return
+            # Drop stale intermediate updates instead of queueing excess edits.
+            if not force:
+                if now - _edit_last_at.get(key, 0.0) < PROGRESS_MIN_INTERVAL:
+                    return
+                if now - _chat_edit_at.get(chat_id, 0.0) < EDIT_MIN_INTERVAL:
+                    return
+            else:
+                wait = EDIT_MIN_INTERVAL - (now - _chat_edit_at.get(chat_id, 0.0))
+                if wait > 0:
+                    await asyncio.sleep(wait)
+
+            try:
+                await message.edit_text(text)
+            except Exception as exc:
+                if exc.__class__.__name__ == "FloodWait":
+                    await asyncio.sleep(max(1, int(getattr(exc, "value", 1))))
+                    await message.edit_text(text)
+                else:
+                    raise
+            now = time.monotonic()
+            _edit_last_at[key] = now
+            _edit_last_text[key] = text
+            _chat_edit_at[chat_id] = now
     except Exception:
-        pass
+        logger.debug("Status message edit skipped or failed", exc_info=True)
 
 
 def _progress_details(current, total, state):
@@ -155,12 +200,12 @@ def _download_progress(message, loop, title):
 
     def callback(current, total, stage):
         now = time.monotonic()
-        if now - state["time"] < 3 and current != total:
+        if now - state["time"] < PROGRESS_MIN_INTERVAL and current != total:
             return
         state["time"] = now
-        text = f"⬇️ Downloading: {title}\n{_progress_details(current, total, state)}"
+        text = f"⬇️ DOWNLOADING\n🎬 {title[:180]}\n{_progress_details(current, total, state)}"
         loop.call_soon_threadsafe(
-            lambda: asyncio.create_task(_safe_edit(message, text))
+            lambda: asyncio.create_task(_safe_edit(message, text, force=(total > 0 and current >= total)))
         )
 
     return callback
@@ -168,13 +213,14 @@ def _download_progress(message, loop, title):
 
 async def _upload_progress(current, total, message, title, state):
     now = time.monotonic()
-    if now - state["time"] < 3 and current != total:
+    if now - state["time"] < PROGRESS_MIN_INTERVAL and current != total:
         return
     state["time"] = now
     state.setdefault("started", now)
     await _safe_edit(
         message,
-        f"📤 Uploading: {title}\n{_progress_details(current, total, state)}",
+        f"📤 UPLOADING TO TELEGRAM\n🎬 {title[:180]}\n{_progress_details(current, total, state)}",
+        force=(total > 0 and current >= total),
     )
 
 
@@ -230,14 +276,14 @@ async def _download_and_upload(bot, chat_id, url, quality, status, caption=None,
     video = None
     thumb_path = None
     try:
-        await status.edit_text("🔎 Extracting video details…")
+        await _safe_edit(status, "🔎 Extracting video details…")
         video = await asyncio.to_thread(extractor.extract, url)
         if not video.qualities:
             raise RuntimeError("No downloadable video stream was found. The page may require browser playback or may have changed.")
 
         loop = asyncio.get_running_loop()
         progress = _download_progress(status, loop, video.title or "Video")
-        await status.edit_text(f"⬇️ Preparing download: {video.title or 'Video'}")
+        await _safe_edit(status, f"⬇️ Preparing download: {video.title or 'Video'}")
         if download_semaphore is None:
             await asyncio.to_thread(downloader.download, video, quality, progress)
         else:
@@ -247,7 +293,7 @@ async def _download_and_upload(bot, chat_id, url, quality, status, caption=None,
         thumb_path = await asyncio.to_thread(_download_thumbnail, video.thumbnail)
         upload_state = {"time": 0.0}
         title = video.title or "Video"
-        await status.edit_text(f"📤 Uploading: {title}")
+        await _safe_edit(status, f"📤 Uploading: {title}")
         # Upload to the configured dump channel first; if it fails, use the user's chat.
         dump_chat_id = None
         try:
@@ -281,7 +327,7 @@ async def _download_and_upload(bot, chat_id, url, quality, status, caption=None,
                 if dump_chat_id is None:
                     raise
                 logger.exception("Upload to dump channel failed; falling back to user chat")
-                await status.edit_text("⚠️ Dump-channel upload failed. Retrying in your chat…")
+                await _safe_edit(status, "⚠️ Dump-channel upload failed. Retrying in your chat…")
                 send_kwargs["chat_id"] = chat_id
                 upload_state["time"] = 0.0
                 upload_state["started"] = time.monotonic()
@@ -293,7 +339,7 @@ async def _download_and_upload(bot, chat_id, url, quality, status, caption=None,
         else:
             async with upload_semaphore:
                 destination_note = await _send_with_fallback()
-        await status.edit_text(
+        await _safe_edit(status, 
             f"✅ Uploaded successfully\n\n🎬 {title}\n"
             f"🎚 Quality: {video.selected_quality or quality}{destination_note}"
         )
@@ -374,7 +420,7 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
                         continue
                 jobs.append((url, title))
         if not jobs:
-            await status.edit_text(
+            await _safe_edit(status, 
                 f"🏁 Nothing to upload.\n\n📺 {state.get('channel_name', 'Channel')}\n"
                 f"⏭️ Skipped: {skipped} (already uploaded: {already_uploaded})"
             )
@@ -440,7 +486,7 @@ async def _process_channel(bot, message, state, user_id, all_pages=False):
                         f"✅ Uploaded: {uploaded}\n⏭️ Skipped: {skipped} (already uploaded: {already_uploaded})\n❌ Failed: {failed}"
                     )
         await asyncio.gather(*(worker() for _ in range(min(worker_count, len(jobs)))))
-        await status.edit_text(
+        await _safe_edit(status, 
             f"🏁 Listing processing finished\n\n📺 {state.get('channel_name', 'Channel')}\n"
             f"✅ Uploaded: {uploaded}\n⏭️ Skipped: {skipped} (already uploaded: {already_uploaded})\n❌ Failed: {failed}\n"
             f"📄 Pages scanned: {min(total_pages, len(pages) if hasattr(pages, '__len__') else total_pages)}\n"
@@ -558,7 +604,7 @@ async def resume_batch_command(bot, message):
             "skip_uploaded": True, "speed": data.get("speed", "balanced"),
         }
         pending[user_id] = state
-        await status.edit_text("🔄 Resuming saved batch. Upload history will skip completed videos.")
+        await _safe_edit(status, "🔄 Resuming saved batch. Upload history will skip completed videos.")
         await _process_channel(bot, message, state, user_id, all_pages=bool(data.get("all_pages", True)))
     except Exception as exc:
         logger.exception("Could not resume saved batch")
@@ -643,12 +689,12 @@ async def vid_command(bot, message):
     try:
         video = await asyncio.to_thread(extractor.extract, url)
         if not video.qualities:
-            return await status.edit_text("❌ No downloadable stream was found for this video.")
+            return await _safe_edit(status, "❌ No downloadable stream was found for this video.")
         qualities = list(video.qualities)
         qualities.sort(key=lambda value: int(re.search(r"\d+", value).group()) if re.search(r"\d+", value) else 0, reverse=True)
         qualities = qualities[:8]
         pending[message.from_user.id] = {"type": "video", "url": url, "qualities": qualities}
-        await status.edit_text(
+        await _safe_edit(status, 
             f"🎬 {video.title or 'Video'}\n\n"
             f"⏱ Duration: {_duration_text(video.duration)}\n"
             f"🎚 Available qualities: {', '.join(qualities)}\n\n"
@@ -657,7 +703,7 @@ async def vid_command(bot, message):
         )
     except Exception as exc:
         logger.exception("JAVDL video extraction failed")
-        await status.edit_text(f"❌ Extraction failed\n{type(exc).__name__}: {str(exc)[:700]}")
+        await _safe_edit(status, f"❌ Extraction failed\n{type(exc).__name__}: {str(exc)[:700]}")
 
 
 @Client.on_message(filters.private & filters.command(["channel"], ["/", "."]))
@@ -688,7 +734,7 @@ async def javtiful_channel_command(bot, message):
         }
         pending[message.from_user.id] = state
         count = info.get("total_videos")
-        await status.edit_text(
+        await _safe_edit(status, 
             f"📺 {state['channel_name']}\n"
             f"🎬 Videos: {count if count is not None else 'Unknown'}\n"
             f"📄 Pages: {total_pages}\n"
@@ -698,7 +744,7 @@ async def javtiful_channel_command(bot, message):
         )
     except Exception as exc:
         logger.exception("JAVDL channel inspection failed")
-        await status.edit_text(f"❌ Channel inspection failed\n{type(exc).__name__}: {str(exc)[:700]}")
+        await _safe_edit(status, f"❌ Channel inspection failed\n{type(exc).__name__}: {str(exc)[:700]}")
 
 
 @Client.on_message(filters.private & filters.command(["actress"], ["/", "."]))
@@ -726,7 +772,7 @@ async def actress_command(bot, message):
         state["skip_uploaded"] = True
         pending[message.from_user.id] = state
         count = info.get("total_videos")
-        await status.edit_text(
+        await _safe_edit(status, 
             f"🎭 {state['channel_name']}\n"
             f"🎬 Videos: {count if count is not None else 'Unknown'}\n"
             f"📄 Pages: {total_pages}\n"
@@ -736,7 +782,7 @@ async def actress_command(bot, message):
         )
     except Exception as exc:
         logger.exception("Javtiful actress listing inspection failed")
-        await status.edit_text(f"❌ Actress listing inspection failed\n{type(exc).__name__}: {str(exc)[:700]}")
+        await _safe_edit(status, f"❌ Actress listing inspection failed\n{type(exc).__name__}: {str(exc)[:700]}")
 
 
 @Client.on_callback_query(filters.regex(r"^javdl\|"))
