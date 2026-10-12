@@ -6,11 +6,17 @@ from gofile_media import _safe_name, extract_screenshots
 from gofile_search import _parse_page
 from gofile_bot import (
     _screenshot_quantity_keyboard, _combined_quantity_keyboard, _bulk_quantity_keyboard,
-    _parallel_keyboard, PARALLEL_LIMITS,
+    _parallel_keyboard, PARALLEL_LIMITS, _bulk_success_message,
 )
 
 
 class GofileSearchTests(unittest.TestCase):
+    def test_bulk_successes_are_combined_into_one_compact_message(self):
+        self.assertEqual(
+            _bulk_success_message(["START-618", "START-627", "IPZZ-950"]),
+            "START-618✅ START-627✅ IPZZ-950✅",
+        )
+
     def test_parallel_keyboard_offers_custom_worker_counts(self):
         keyboard = _parallel_keyboard()
         callback_data = [
