@@ -9,7 +9,7 @@ A Telegram bot that searches Javtiful by video code, lets you browse matching re
 - Download a selected result and upload it to GoFile without a GoFile account token.
 - Extract 5, 10, 15, or 20 evenly spaced screenshots from a selected video using the **SS** button.
 - For **SS**, **DL + SS**, and bulk screenshot jobs, choose whether screenshots go to the current chat or private Telegram channel `-1003963567446`.
-- Bulk mode supports up to 20 codes separated by new lines, commas, or semicolons. Choose **Download all**, **Screenshots all**, or **Download + Screenshots all**.
+- Bulk mode supports up to 100 codes separated by new lines, commas, or semicolons. Choose **Download all**, **Screenshots all**, or **Download + Screenshots all**.
 - **Parallel bulk pipeline:** different videos can be in progress concurrently. Each video follows download → screenshots (if selected) → GoFile upload (if selected), with independent limits for downloads, screenshot extraction, and uploads.
 - Configure worker counts using `/parallel`: 1–5 download workers, 1–3 GoFile upload workers, and 1–2 screenshot workers. Defaults: 3 downloads, 2 uploads, 1 screenshot worker. Settings apply to the next batch.
 - Active video jobs are capped by the download-worker count, and temporary files are cleaned up after each video to limit Colab storage use.
@@ -37,7 +37,7 @@ No database, Neon, `API_ID`, `API_HASH`, or GoFile API token is required. FFmpeg
 3. Run **Check** to compile the bot modules and execute the GoFile regression tests.
 4. Run **Start bot** and keep that cell running.
 5. Open the bot in Telegram and send a full video code such as `IPZZ-989` or a prefix such as `IPZZ`. Choose a result, then press **DL** to upload to GoFile, **SS** to extract screenshots, or **DL + SS** to do both.
-6. For bulk mode, send multiple full codes (maximum 20), then choose **Download all**, **Screenshots all**, or **Download + Screenshots all**. For screenshot actions, select the screenshot quantity and destination.
+6. For bulk mode, send multiple full codes (maximum 100), then choose **Download all**, **Screenshots all**, or **Download + Screenshots all**. For screenshot actions, select the screenshot quantity and destination.
 7. Use `/parallel` to adjust download, screenshot, and upload worker counts. The settings apply to the next batch. The pipeline overlaps different videos while keeping active video jobs bounded.
 8. To send screenshots to the private channel, add the bot to channel `-1003963567446` and grant permission to post messages.
 
