@@ -631,8 +631,8 @@ async def _process_channel(bot, message, state, user_id, all_pages=False, select
             if state.get("batch_channel_index"):
                 await _safe_edit(
                     status,
-                    f"🔎 SAVED CHANNELS • Channel {state['batch_channel_index']}/{state['batch_channel_total']}\\n"
-                    f"📺 {state.get('channel_name', 'Listing')}\\n"
+                    f"🔎 SAVED CHANNELS • Channel {state['batch_channel_index']}/{state['batch_channel_total']}\n"
+                    f"📺 {state.get('channel_name', 'Listing')}\n"
                     f"📄 Scanning page {page_number + 1}/{len(pages)} • {len(jobs)} new videos queued",
                 )
         if not jobs:
