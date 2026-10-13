@@ -855,7 +855,7 @@ async def run_bulk_jobs(query, batch, mode, screenshot_count, destination="chat"
     status = await query.message.reply_text("📊 Preparing batch dashboard…")
     batch_state = {
         "total": total,
-        "profile": "safe" if settings["downloads"] == 1 else ("fast" if settings["downloads"] >= 3 else "balanced"),
+        "profile": ("safe" if settings["downloads"] == 1 and settings["uploads"] == 1 else ("fast" if settings["downloads"] >= 4 or settings["uploads"] >= 3 or settings["screenshots"] >= 2 else "balanced")),
         "completed": [],
         "failed": [],
         "skipped": int(batch.get("missing_count", 0)),
@@ -961,8 +961,12 @@ async def run_bulk_jobs(query, batch, mode, screenshot_count, destination="chat"
                 shutil.rmtree(temp_dir, ignore_errors=True)
 
     await asyncio.gather(*(process_one(i, row) for i, row in enumerate(rows, 1)))
-    # One final dashboard message remains; individual per-video progress messages are never sent.
+    # Keep the live dashboard, then send exactly one compact success list in input order.
     await _refresh_batch_dashboard(status, batch_state, force=True)
+    completed_set = set(batch_state["completed"])
+    success_codes = [row["requested_code"] for row in rows if row["requested_code"] in completed_set]
+    if success_codes:
+        await query.message.reply_text(_bulk_success_message(success_codes))
 
 async def unknown_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_owner(update):
