@@ -764,7 +764,7 @@ async def bulk_quantity_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 
 def _dashboard_progress_line(job):
-    title = re.sub(r"\\s+", " ", str(job.get("title") or job.get("code") or "Video")).strip()
+    title = re.sub(r"\s+", " ", str(job.get("title") or job.get("code") or "Video")).strip()
     if len(title) > 56:
         title = title[:53] + "..."
     current = max(0, float(job.get("current", 0) or 0))
