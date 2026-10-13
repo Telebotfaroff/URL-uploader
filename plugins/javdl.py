@@ -128,7 +128,7 @@ def _load_saved_channels_catalog_sync():
             continue
         seen.add(canonical)
         slug = str(entry.get("slug") or urlparse(channel_url).path.rstrip("/").split("/")[-1])
-        name = re.sub(r"\\s+", " ", str(entry.get("name") or slug.replace("-", " "))).strip()
+        name = re.sub(r"\s+", " ", str(entry.get("name") or slug.replace("-", " "))).strip()
         try:
             video_count = int(entry.get("video_count")) if entry.get("video_count") is not None else None
         except (TypeError, ValueError):
@@ -844,9 +844,9 @@ async def saved_channels_command(bot, message):
             search_term = " ".join(parts[2:]).strip().casefold()
         elif len(parts) >= 2:
             return await message.reply_text(
-                "Usage:\\n"
-                "• /channels — choose a channel by name\\n"
-                "• /channels search Attackers — search channel names\\n"
+                "Usage:\n"
+                "• /channels — choose a channel by name\n"
+                "• /channels search Attackers — search channel names\n"
                 "• /channels all — process every saved channel sequentially"
             )
         status = await message.reply_text("🔎 Loading channel names…")
@@ -862,17 +862,17 @@ async def saved_channels_command(bot, message):
                 )
             pending[user_id] = {"type": "saved_channel_picker", "channels": channels, "page": 0}
             heading = (
-                f"🔎 Channel search: {search_term}\\n" if search_term else "📚 Choose a Javtiful channel\\n"
+                f"🔎 Channel search: {search_term}\n" if search_term else "📚 Choose a Javtiful channel\n"
             )
             await _safe_edit(
                 status,
-                heading + f"Found {len(channels)} channel(s). Tap a name to inspect its videos.\\n\\n"
+                heading + f"Found {len(channels)} channel(s). Tap a name to inspect its videos.\n\n"
                 "For every saved channel in sequence, use /channels all.",
                 reply_markup=_channel_catalog_keyboard(channels, 0),
             )
         except Exception as exc:
             logger.exception("Could not load channel catalog")
-            await _safe_edit(status, f"❌ Could not load channel names\\n{type(exc).__name__}: {str(exc)[:400]}")
+            await _safe_edit(status, f"❌ Could not load channel names\n{type(exc).__name__}: {str(exc)[:400]}")
         return
     active_saved_batches.add(user_id)
     status = await message.reply_text("🔎 Checking saved-channel run…")
@@ -1052,7 +1052,7 @@ async def saved_channels_command(bot, message):
         active_saved_batches.discard(user_id)
         pending.pop(user_id, None)
 
-@Client.on_callback_query(filters.regex(r"^savedch\\|"))
+@Client.on_callback_query(filters.regex(r"^savedch\|"))
 async def saved_channel_picker_callback(bot, query):
     state = pending.get(query.from_user.id)
     if not state or state.get("type") != "saved_channel_picker":
@@ -1104,16 +1104,16 @@ async def saved_channel_picker_callback(bot, query):
             count = new_state.get("total_videos")
             await _safe_edit(
                 status,
-                f"📺 {channel_name}\\n"
-                f"🎬 Videos: {count if count is not None else 'Unknown'}\\n"
-                f"📄 Pages: {total_pages}\\n"
-                f"📌 First-page entries: {len(new_state['first_page']['items'])}\\n\\n"
+                f"📺 {channel_name}\n"
+                f"🎬 Videos: {count if count is not None else 'Unknown'}\n"
+                f"📄 Pages: {total_pages}\n"
+                f"📌 First-page entries: {len(new_state['first_page']['items'])}\n\n"
                 "Choose what to process:",
                 reply_markup=_channel_keyboard(new_state["skip_uploaded"], new_state["speed"]),
             )
         except Exception as exc:
             logger.exception("Could not inspect selected saved channel")
-            await _safe_edit(status, f"❌ Could not inspect {selected.get('name', 'channel')}\\n{type(exc).__name__}: {str(exc)[:500]}")
+            await _safe_edit(status, f"❌ Could not inspect {selected.get('name', 'channel')}\n{type(exc).__name__}: {str(exc)[:500]}")
         return
     return await query.answer("Unknown channel-picker action.", show_alert=True)
 
