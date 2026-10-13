@@ -698,7 +698,7 @@ async def start_bulk_search(update, codes):
         return
 
     bulk_id = uuid.uuid4().hex[:8]
-    BULK_JOBS[bulk_id] = {"owner_id": OWNER_ID, "results": results, "created": time.monotonic()}
+    BULK_JOBS[bulk_id] = {"owner_id": OWNER_ID, "results": results, "created": time.monotonic(), "requested_total": len(codes), "missing_count": len(missing)}
     while len(BULK_JOBS) > 5:
         oldest = min(BULK_JOBS, key=lambda key: BULK_JOBS[key]["created"])
         BULK_JOBS.pop(oldest, None)
@@ -763,46 +763,134 @@ async def bulk_quantity_callback(update: Update, context: ContextTypes.DEFAULT_T
     await run_bulk_jobs(query, batch, mode, count, destination)
 
 
+def _dashboard_progress_line(job):
+    title = html.escape(str(job.get("title") or job.get("code") or "Video"))
+    if len(title) > 56:
+        title = title[:53] + "..."
+    current = max(0, float(job.get("current", 0) or 0))
+    total = max(0, float(job.get("total", 0) or 0))
+    mode = job.get("mode", "bytes")
+    if mode == "time":
+        percent = min(100, int(current * 100 / total)) if total > 0 else 0
+        filled = percent * 8 // 100
+        eta = max(0, int(total - current))
+        return f"• {title}\n  {'█' * filled}{'░' * (8 - filled)} {percent}% • ETA {eta // 60:02d}:{eta % 60:02d}"
+    elapsed = max(time.monotonic() - float(job.get("started", time.monotonic())), 0.1)
+    speed = current / elapsed
+    if total > 0:
+        percent = min(100, int(current * 100 / total))
+        eta = max(0, int((total - current) / speed)) if speed > 0 else 0
+        size = f"{current / 1048576:.0f}/{total / 1048576:.0f} MB"
+        eta_text = f"{eta // 60:02d}:{eta % 60:02d}" if speed > 0 else "calculating…"
+    else:
+        percent, size, eta_text = 0, f"{current / 1048576:.0f} MB", "calculating…"
+    filled = percent * 8 // 100
+    return f"• {title}\n  {'█' * filled}{'░' * (8 - filled)} {percent}% • {size} • {speed / 1048576:.1f} MB/s • ETA {eta_text}"
+
+
+def _batch_dashboard_text(batch_state):
+    total = batch_state["total"]
+    completed = len(batch_state["completed"])
+    failed = len(batch_state["failed"])
+    skipped = batch_state["skipped"]
+    active = batch_state["active"]
+    downloading = [job for job in active.values() if job.get("phase") == "download"]
+    uploading = [job for job in active.values() if job.get("phase") == "upload"]
+    other = [job for job in active.values() if job.get("phase") not in ("download", "upload")]
+    queued = max(0, total - completed - failed - skipped - len(active))
+    lines = [f"📊 BATCH • {batch_state['profile'].upper()}", "", f"⬇️ DOWNLOADING ({len(downloading)})"]
+    lines.extend(_dashboard_progress_line(job) for job in downloading)
+    if not downloading:
+        lines.append("• None")
+    lines.extend(["", f"📤 UPLOADING ({len(uploading)})"])
+    lines.extend(_dashboard_progress_line(job) for job in uploading)
+    if not uploading:
+        lines.append("• None")
+    if other:
+        lines.extend(["", f"⚙️ PROCESSING ({len(other)})"])
+        lines.extend(_dashboard_progress_line(job) for job in other)
+    lines.extend([
+        "",
+        f"✅ Complete: {completed}/{total}  •  ⏳ Queue: {queued}",
+        f"⏭️ Skipped: {skipped}  •  ❌ Failed: {failed}",
+    ])
+    return "\n".join(lines)
+
+
+async def _refresh_batch_dashboard(status, batch_state, force=False):
+    now = time.monotonic()
+    if not force and now - batch_state.get("last_dashboard_edit", 0) < 1.5:
+        return
+    async with batch_state["dashboard_lock"]:
+        now = time.monotonic()
+        if not force and now - batch_state.get("last_dashboard_edit", 0) < 1.5:
+            return
+        batch_state["last_dashboard_edit"] = now
+        text = _batch_dashboard_text(batch_state)
+        try:
+            await status.edit_text(text)
+        except Exception as exc:
+            if "message is not modified" not in str(exc).lower():
+                LOGGER.debug("Batch dashboard edit failed: %s", type(exc).__name__)
+
+
+async def _set_batch_progress(status, batch_state, code, title, phase, current, total, mode="bytes"):
+    batch_state["active"][code] = {
+        "code": code, "title": title, "phase": phase,
+        "current": current, "total": total, "mode": mode,
+        "started": batch_state["active"].get(code, {}).get("started", time.monotonic()),
+    }
+    await _refresh_batch_dashboard(status, batch_state)
+
+
 async def run_bulk_jobs(query, batch, mode, screenshot_count, destination="chat"):
     rows = batch["results"]
-    total = len(rows)
+    total = int(batch.get("requested_total", len(rows)))
     settings = dict(PARALLEL_SETTINGS)
     # Bound active jobs so downloaded files cannot accumulate without limit.
     inflight_limit = asyncio.Semaphore(settings["downloads"])
     download_limit = asyncio.Semaphore(settings["downloads"])
     screenshot_limit = asyncio.Semaphore(settings["screenshots"])
     upload_limit = asyncio.Semaphore(settings["uploads"])
-    status = await query.message.reply_text(
-        f"⏳ Bulk job started: {total} video(s). Workers — "
-        f"downloads {settings['downloads']}, screenshots {settings['screenshots']}, uploads {settings['uploads']}."
-    )
-    completed, failed = [], []
-    results_lock = asyncio.Lock()
+    status = await query.message.reply_text("📊 Preparing batch dashboard…")
+    batch_state = {
+        "total": total,
+        "profile": "safe" if settings["downloads"] == 1 else ("fast" if settings["downloads"] >= 3 else "balanced"),
+        "completed": [],
+        "failed": [],
+        "skipped": int(batch.get("missing_count", 0)),
+        "active": {},
+        "last_dashboard_edit": 0.0,
+        "dashboard_lock": asyncio.Lock(),
+    }
+    await _refresh_batch_dashboard(status, batch_state, force=True)
 
     async def process_one(position, row):
         item, code = row["item"], row["requested_code"]
         job_key = (OWNER_ID, item["url"])
         async with inflight_limit:
             if job_key in ACTIVE_DOWNLOADS:
-                async with results_lock:
-                    failed.append((code, "already processing"))
+                batch_state["skipped"] += 1
+                await _refresh_batch_dashboard(status, batch_state, force=True)
                 return
             ACTIVE_DOWNLOADS.add(job_key)
             temp_dir = tempfile.mkdtemp(prefix="gofile_bulk_")
             path = None
-            item_status = await query.message.reply_text(
-                f"⏳ <b>{position}/{total}</b> — <code>{html.escape(code)}</code> queued",
-                parse_mode="HTML",
-            )
+            title = str(item.get("title") or code)
+            batch_state["active"][code] = {
+                "code": code, "title": title, "phase": "download",
+                "current": 0, "total": 0, "mode": "bytes", "started": time.monotonic(),
+            }
+            await _refresh_batch_dashboard(status, batch_state, force=True)
             try:
                 loop = asyncio.get_running_loop()
-                download_state = {"started": time.monotonic(), "last_edit": 0.0}
+                download_state = {"started": time.monotonic()}
 
                 def download_progress(current, size, progress_mode="bytes"):
                     asyncio.run_coroutine_threadsafe(
-                        _update_transfer(
-                            item_status, f"⬇️ DOWNLOAD {position}/{total} — {code}",
-                            current, size, download_state, mode=progress_mode,
+                        _set_batch_progress(
+                            status, batch_state, code, title, "download",
+                            current, size, progress_mode,
                         ),
                         loop,
                     )
@@ -816,23 +904,29 @@ async def run_bulk_jobs(query, batch, mode, screenshot_count, destination="chat"
                 screenshots = []
                 # Per-video order: download -> screenshots -> GoFile upload.
                 if mode in ("ss", "both"):
+                    batch_state["active"][code].update({
+                        "phase": "screenshots", "current": 0, "total": 0,
+                        "mode": "bytes", "started": time.monotonic(),
+                    })
+                    await _refresh_batch_dashboard(status, batch_state, force=True)
                     async with screenshot_limit:
-                        await item_status.edit_text(
-                            f"📸 <b>{position}/{total}</b> — <code>{html.escape(code)}</code> extracting screenshots",
-                            parse_mode="HTML",
-                        )
                         screenshots = await asyncio.to_thread(
                             extract_screenshots, str(path), temp_dir, screenshot_count, video.duration
                         )
 
                 if mode in ("dl", "both"):
-                    upload_state = {"started": time.monotonic(), "last_edit": 0.0}
+                    batch_state["active"][code].update({
+                        "phase": "upload", "current": 0, "total": path.stat().st_size,
+                        "mode": "bytes", "started": time.monotonic(),
+                    })
+                    await _refresh_batch_dashboard(status, batch_state, force=True)
+                    upload_state = {"started": time.monotonic()}
 
                     def upload_progress(current, size):
                         asyncio.run_coroutine_threadsafe(
-                            _update_transfer(
-                                item_status, f"☁️ GOFILE {position}/{total} — {code}",
-                                current, size, upload_state,
+                            _set_batch_progress(
+                                status, batch_state, code, title, "upload",
+                                current, size, "bytes",
                             ),
                             loop,
                         )
@@ -841,42 +935,21 @@ async def run_bulk_jobs(query, batch, mode, screenshot_count, destination="chat"
                         gofile_link = await asyncio.to_thread(upload_guest, str(path), upload_progress)
 
                 code_html = html.escape(item.get("code") or code)
-
                 if screenshots:
                     destination_chat_id = SCREENSHOT_CHANNEL_ID if destination == "channel" else query.message.chat_id
                     await _send_screenshot_albums(
                         query.get_bot(), screenshots, code_html, destination_chat_id
                     )
-                # Update the same combined message immediately after each successful
-                # video task. Locking prevents parallel completions from overwriting
-                # a newer success list with an older snapshot.
-                async with results_lock:
-                    completed.append(code)
-                    completed_set = set(completed)
-                    success_codes = [
-                        result_row["requested_code"] for result_row in rows
-                        if result_row["requested_code"] in completed_set
-                    ]
-                    try:
-                        await status.edit_text(_bulk_success_message(success_codes))
-                    except Exception:
-                        pass
-                # Remove the successful video's individual progress message.
-                try:
-                    await item_status.delete()
-                except Exception:
-                    pass
+                async with batch_state["dashboard_lock"]:
+                    batch_state["completed"].append(code)
+                    batch_state["active"].pop(code, None)
+                await _refresh_batch_dashboard(status, batch_state, force=True)
             except Exception as exc:
                 LOGGER.exception("Bulk job failed for %s", code)
-                async with results_lock:
-                    failed.append((code, str(exc)[:180]))
-                try:
-                    await item_status.edit_text(
-                        f"❌ <b>{html.escape(code)}</b>: {html.escape(str(exc)[:400])}",
-                        parse_mode="HTML",
-                    )
-                except Exception:
-                    pass
+                async with batch_state["dashboard_lock"]:
+                    batch_state["failed"].append((code, str(exc)[:180]))
+                    batch_state["active"].pop(code, None)
+                await _refresh_batch_dashboard(status, batch_state, force=True)
             finally:
                 ACTIVE_DOWNLOADS.discard(job_key)
                 if path:
@@ -888,16 +961,8 @@ async def run_bulk_jobs(query, batch, mode, screenshot_count, destination="chat"
                 shutil.rmtree(temp_dir, ignore_errors=True)
 
     await asyncio.gather(*(process_one(i, row) for i, row in enumerate(rows, 1)))
-    # Preserve the original input order even when parallel jobs finish out of order.
-    completed_set = set(completed)
-    success_codes = [
-        row["requested_code"] for row in rows
-        if row["requested_code"] in completed_set
-    ]
-    if success_codes:
-        await status.edit_text(_bulk_success_message(success_codes))
-    else:
-        await status.edit_text("❌ No videos completed successfully.")
+    # One final dashboard message remains; individual per-video progress messages are never sent.
+    await _refresh_batch_dashboard(status, batch_state, force=True)
 
 async def unknown_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_owner(update):
