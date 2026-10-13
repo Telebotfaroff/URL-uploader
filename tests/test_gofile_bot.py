@@ -6,7 +6,7 @@ from gofile_media import _safe_name, extract_screenshots
 from gofile_search import _parse_page
 from gofile_bot import (
     _screenshot_quantity_keyboard, _combined_quantity_keyboard, _bulk_quantity_keyboard,
-    _parallel_keyboard, PARALLEL_LIMITS, _bulk_success_message, MAX_BULK_CODES, BULK_SEARCH_WORKERS,
+    _parallel_keyboard, PARALLEL_LIMITS, _bulk_success_message, _batch_dashboard_text, MAX_BULK_CODES, BULK_SEARCH_WORKERS,
 )
 
 
@@ -20,6 +20,30 @@ class GofileSearchTests(unittest.TestCase):
             _bulk_success_message(["START-618", "START-627", "IPZZ-950"]),
             "START-618✅ START-627✅ IPZZ-950✅",
         )
+
+    def test_batch_dashboard_shows_separate_transfer_queues_and_counts(self):
+        state = {
+            "total": 194,
+            "profile": "balanced",
+            "completed": ["START-618", "START-627"],
+            "failed": [],
+            "skipped": 6,
+            "active": {
+                "IPZZ-950": {
+                    "code": "IPZZ-950", "title": "Example video", "phase": "upload",
+                    "current": 30 * 1024 * 1024, "total": 100 * 1024 * 1024,
+                    "mode": "bytes", "started": 100.0,
+                }
+            },
+        }
+        text = _batch_dashboard_text(state)
+        self.assertIn("📊 BATCH • BALANCED", text)
+        self.assertIn("⬇️ DOWNLOADING (0)", text)
+        self.assertIn("📤 UPLOADING (1)", text)
+        self.assertIn("Complete: 2/194", text)
+        self.assertIn("Queue: 185", text)
+        self.assertIn("Skipped: 6", text)
+        self.assertIn("Failed: 0", text)
 
     def test_parallel_keyboard_offers_custom_worker_counts(self):
         keyboard = _parallel_keyboard()
