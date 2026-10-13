@@ -108,6 +108,67 @@ def _load_saved_channel_urls_sync():
                     found.append(url)
     return found
 
+def _load_saved_channels_catalog_sync():
+    """Load channel names and metadata from the repository's generated channel catalog."""
+    url = "https://raw.githubusercontent.com/Telebotfaroff/URL-uploader/main/data/channels.json"
+    response = requests.get(url, timeout=20, headers={"User-Agent": "URL-Uploader-Bot"})
+    response.raise_for_status()
+    payload = response.json()
+    entries = payload.get("channels", []) if isinstance(payload, dict) else []
+    channels = []
+    seen = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        channel_url = str(entry.get("url") or "").strip()
+        if not _valid_url(channel_url, "/channel/"):
+            continue
+        canonical = _canonical_video_url(channel_url)
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        slug = str(entry.get("slug") or urlparse(channel_url).path.rstrip("/").split("/")[-1])
+        name = re.sub(r"\\s+", " ", str(entry.get("name") or slug.replace("-", " "))).strip()
+        try:
+            video_count = int(entry.get("video_count")) if entry.get("video_count") is not None else None
+        except (TypeError, ValueError):
+            video_count = None
+        channels.append({
+            "name": name or slug,
+            "slug": slug,
+            "url": channel_url,
+            "video_count": video_count,
+            "thumbnail": entry.get("thumbnail"),
+        })
+    channels.sort(key=lambda item: item["name"].casefold())
+    return channels
+
+
+def _channel_catalog_keyboard(channels, page=0, page_size=8):
+    """Build a paginated picker that displays channel names instead of raw URLs."""
+    total_pages = max(1, (len(channels) + page_size - 1) // page_size)
+    page = max(0, min(int(page), total_pages - 1))
+    start = page * page_size
+    rows = []
+    for index in range(start, min(start + page_size, len(channels))):
+        item = channels[index]
+        name = item.get("name") or "Channel"
+        if len(name) > 34:
+            name = name[:31].rstrip() + "..."
+        count = item.get("video_count")
+        label = f"📺 {name}" + (f" · {count} videos" if count is not None else "")
+        rows.append([InlineKeyboardButton(label[:60], callback_data=f"savedch|select|{index}")])
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"savedch|page|{page - 1}"))
+    nav.append(InlineKeyboardButton(f"Page {page + 1}/{total_pages}", callback_data="savedch|noop"))
+    if page + 1 < total_pages:
+        nav.append(InlineKeyboardButton("Next ➡️", callback_data=f"savedch|page|{page + 1}"))
+    if nav:
+        rows.append(nav)
+    return InlineKeyboardMarkup(rows)
+
+
 def _duration_text(value):
     if not value:
         return "Unknown"
@@ -776,6 +837,43 @@ async def saved_channels_command(bot, message):
         return await message.reply_text("⏳ A channel/actress batch is already running.")
     if user_id in active_saved_batches:
         return await message.reply_text("⏳ Your saved-channel batch is already running.")
+    parts = message.command or []
+    if len(parts) < 2 or parts[1].lower() != "all":
+        search_term = ""
+        if len(parts) >= 3 and parts[1].lower() == "search":
+            search_term = " ".join(parts[2:]).strip().casefold()
+        elif len(parts) >= 2:
+            return await message.reply_text(
+                "Usage:\\n"
+                "• /channels — choose a channel by name\\n"
+                "• /channels search Attackers — search channel names\\n"
+                "• /channels all — process every saved channel sequentially"
+            )
+        status = await message.reply_text("🔎 Loading channel names…")
+        try:
+            channels = await asyncio.to_thread(_load_saved_channels_catalog_sync)
+            if search_term:
+                channels = [item for item in channels if search_term in item["name"].casefold() or search_term in item["slug"].casefold()]
+            if not channels:
+                return await _safe_edit(
+                    status,
+                    "ℹ️ No matching saved channels found." if search_term else
+                    "ℹ️ No channel metadata found in data/channels.json. Check the repository's channel export workflow.",
+                )
+            pending[user_id] = {"type": "saved_channel_picker", "channels": channels, "page": 0}
+            heading = (
+                f"🔎 Channel search: {search_term}\\n" if search_term else "📚 Choose a Javtiful channel\\n"
+            )
+            await _safe_edit(
+                status,
+                heading + f"Found {len(channels)} channel(s). Tap a name to inspect its videos.\\n\\n"
+                "For every saved channel in sequence, use /channels all.",
+                reply_markup=_channel_catalog_keyboard(channels, 0),
+            )
+        except Exception as exc:
+            logger.exception("Could not load channel catalog")
+            await _safe_edit(status, f"❌ Could not load channel names\\n{type(exc).__name__}: {str(exc)[:400]}")
+        return
     active_saved_batches.add(user_id)
     status = await message.reply_text("🔎 Checking saved-channel run…")
     setting_key = f"saved_channels_run_{user_id}"
@@ -953,6 +1051,72 @@ async def saved_channels_command(bot, message):
     finally:
         active_saved_batches.discard(user_id)
         pending.pop(user_id, None)
+
+@Client.on_callback_query(filters.regex(r"^savedch\\|"))
+async def saved_channel_picker_callback(bot, query):
+    state = pending.get(query.from_user.id)
+    if not state or state.get("type") != "saved_channel_picker":
+        return await query.answer("Channel list expired. Send /channels again.", show_alert=True)
+    action = query.data.split("|")
+    channels = state.get("channels") or []
+    if len(action) < 2:
+        return await query.answer("Invalid channel selection.", show_alert=True)
+    if action[1] == "noop":
+        return await query.answer()
+    if action[1] == "page":
+        try:
+            page = int(action[2])
+        except (IndexError, ValueError):
+            return await query.answer("Invalid page.", show_alert=True)
+        page_size = 8
+        total_pages = max(1, (len(channels) + page_size - 1) // page_size)
+        if not 0 <= page < total_pages:
+            return await query.answer("Page no longer exists.", show_alert=True)
+        state["page"] = page
+        await query.answer()
+        return await query.message.edit_reply_markup(
+            reply_markup=_channel_catalog_keyboard(channels, page)
+        )
+    if action[1] == "select":
+        try:
+            index = int(action[2])
+            selected = channels[index]
+        except (IndexError, ValueError, TypeError):
+            return await query.answer("That channel is no longer available.", show_alert=True)
+        await query.answer(f"Opening {selected.get('name', 'channel')}…")
+        status = query.message
+        try:
+            info = await asyncio.to_thread(channel_extractor.inspect, selected["url"])
+            total_pages = max(1, int(info.get("total_pages") or 1))
+            channel_name = info.get("channel_name") or selected.get("name") or "Channel"
+            new_state = {
+                "type": "channel",
+                "listing_type": "channel",
+                "speed": DEFAULT_PARALLEL_SPEED,
+                "url": selected["url"],
+                "channel_name": channel_name,
+                "total_pages": total_pages,
+                "total_videos": info.get("total_videos", selected.get("video_count")),
+                "first_page": {"items": info.get("first_page_items") or []},
+                "skip_uploaded": True,
+            }
+            pending[query.from_user.id] = new_state
+            count = new_state.get("total_videos")
+            await _safe_edit(
+                status,
+                f"📺 {channel_name}\\n"
+                f"🎬 Videos: {count if count is not None else 'Unknown'}\\n"
+                f"📄 Pages: {total_pages}\\n"
+                f"📌 First-page entries: {len(new_state['first_page']['items'])}\\n\\n"
+                "Choose what to process:",
+                reply_markup=_channel_keyboard(new_state["skip_uploaded"], new_state["speed"]),
+            )
+        except Exception as exc:
+            logger.exception("Could not inspect selected saved channel")
+            await _safe_edit(status, f"❌ Could not inspect {selected.get('name', 'channel')}\\n{type(exc).__name__}: {str(exc)[:500]}")
+        return
+    return await query.answer("Unknown channel-picker action.", show_alert=True)
+
 
 @Client.on_message(filters.private & filters.command(["resume"], ["/", "."]))
 async def resume_batch_command(bot, message):
