@@ -211,9 +211,8 @@ def _dashboard_key(message):
 
 
 def _format_active_transfer(item):
-    # Keep the title and telemetry on separate short lines for easier scanning
-    # in Telegram, especially on narrow phone screens.
-    title = str(item.get("title") or "Video").replace("\\n", " ").strip()
+    # Keep titles on one line for reliable, readable Telegram dashboards.
+    title = re.sub(r"\s+", " ", str(item.get("title") or "Video")).strip()
     if len(title) > 48:
         title = title[:45].rstrip() + "..."
     current = max(0, int(item.get("current") or 0))
@@ -236,37 +235,56 @@ def _format_active_transfer(item):
     return f"• {title}\n{details}"
 
 
+# One shared live dashboard per batch status message.
+_BATCH_DASHBOARDS = {}
+
+
+def _dashboard_key(message):
+    chat_id = getattr(getattr(message, "chat", None), "id", None)
+    message_id = getattr(message, "id", getattr(message, "message_id", None))
+    return (chat_id, message_id)
+
+
 async def _dashboard_refresh(status, force=False):
     dashboard = _BATCH_DASHBOARDS.get(_dashboard_key(status))
     if not dashboard:
         return
-    downloads = list(dashboard["downloads"].values())
-    uploads = list(dashboard["uploads"].values())
-    lines = [
-        f"📊 BATCH • {dashboard['mode'].upper()}",
-        "",
-        f"⬇️ DOWNLOADING ({len(downloads)})",
-    ]
-    lines.extend(_format_active_transfer(item) for item in downloads[:4])
-    if len(downloads) > 4:
-        lines.append(f"• +{len(downloads) - 4} more downloads")
-    if not downloads:
-        lines.append("• None")
-    lines.extend(["", f"📤 UPLOADING ({len(uploads)})"])
-    lines.extend(_format_active_transfer(item) for item in uploads[:4])
-    if len(uploads) > 4:
-        lines.append(f"• +{len(uploads) - 4} more uploads")
-    if not uploads:
-        lines.append("• None")
-    active = len(downloads) + len(uploads)
-    queued = max(0, dashboard["total"] - dashboard["completed"] - dashboard["failed"] - active)
-    lines.extend([
-        "",
-        f"✅ Complete: {dashboard['completed']}/{dashboard['total']}  •  ⏳ Queue: {queued}",
-        f"⏭️ Skipped: {dashboard['skipped']}  •  ❌ Failed: {dashboard['failed']}",
-    ])
-    await _safe_edit(status, "\n".join(lines), force=force)
-
+    # Download and upload callbacks can fire concurrently. Serialize rendering
+    # and coalesce intermediate edits to prevent stale Telegram updates winning.
+    refresh_lock = dashboard.setdefault("refresh_lock", asyncio.Lock())
+    async with refresh_lock:
+        now = time.monotonic()
+        if not force and now - dashboard.get("last_refresh_at", 0.0) < 2.0:
+            return
+        dashboard["last_refresh_at"] = now
+        downloads = list(dashboard["downloads"].values())
+        uploads = list(dashboard["uploads"].values())
+        lines = [
+            f"📊 BATCH • {dashboard['mode'].upper()}",
+            "",
+            f"⬇️ DOWNLOADING ({len(downloads)})",
+        ]
+        lines.extend(_format_active_transfer(item) for item in downloads[:4])
+        if len(downloads) > 4:
+            lines.append(f"• +{len(downloads) - 4} more downloads")
+        if not downloads:
+            lines.append("• None")
+        lines.extend(["", f"📤 UPLOADING ({len(uploads)})"])
+        lines.extend(_format_active_transfer(item) for item in uploads[:4])
+        if len(uploads) > 4:
+            lines.append(f"• +{len(uploads) - 4} more uploads")
+        if not uploads:
+            lines.append("• None")
+        active = len(downloads) + len(uploads)
+        queued = max(0, dashboard["total"] - dashboard["completed"] - dashboard["failed"] - active)
+        lines.extend([
+            "",
+            f"✅ Complete: {dashboard['completed']}/{dashboard['total']}  •  ⏳ Queue: {queued}",
+            f"⏭️ Skipped: {dashboard['skipped']}  •  ❌ Failed: {dashboard['failed']}",
+        ])
+        # The dashboard itself is throttled above, so force the edit here; the
+        # generic status-message throttle would otherwise drop fresh progress.
+        await _safe_edit(status, "\n".join(lines), force=True)
 
 async def _dashboard_start(status, phase, title):
     dashboard = _BATCH_DASHBOARDS.get(_dashboard_key(status))
