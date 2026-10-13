@@ -619,6 +619,15 @@ async def _process_channel(bot, message, state, user_id, all_pages=False, select
                         skipped += 1
                         continue
                 jobs.append((url, title))
+            run_manifest = state.get("saved_channels_run")
+            run_setting_key = state.get("saved_channels_setting_key")
+            if run_manifest is not None and run_setting_key:
+                run_manifest["current_page"] = page_number + 1
+                run_manifest["current_channel_index"] = state.get("batch_channel_index")
+                try:
+                    await db.set_setting(run_setting_key, json.dumps(run_manifest))
+                except Exception:
+                    logger.exception("Could not persist page checkpoint for saved channel %s", page_number + 1)
         if not jobs:
             await _safe_edit(status, 
                 f"🏁 Nothing to upload.\n\n📺 {state.get('channel_name', 'Channel')}\n"
@@ -859,6 +868,8 @@ async def saved_channels_command(bot, message):
                     "run_uploaded_base": uploaded_total,
                     "run_skipped_base": skipped_total,
                     "run_failed_base": failed_videos_total,
+                    "saved_channels_run": run,
+                    "saved_channels_setting_key": setting_key,
                 }
                 pending[user_id] = state
                 await _safe_edit(
@@ -881,9 +892,10 @@ async def saved_channels_command(bot, message):
                 failed_videos_total += int(result.get("failed") or 0)
                 skipped_total += int(result.get("skipped") or 0)
                 already_uploaded_total += int(result.get("already_uploaded") or 0)
-                completed += 1
                 if result.get("status") == "error":
                     errors.append({"url": url, "error": result.get("error", "Processing failed")})
+                else:
+                    completed += 1
             except Exception as exc:
                 errors.append({"url": url, "error": f"{type(exc).__name__}: {str(exc)[:180]}"})
                 logger.exception("Saved channel failed: %s", url)
@@ -904,6 +916,8 @@ async def saved_channels_command(bot, message):
             })
             run.pop("current_index", None)
             run.pop("current_url", None)
+            run.pop("current_page", None)
+            run.pop("current_channel_index", None)
             try:
                 await db.set_setting(setting_key, json.dumps(run))
             except Exception:
