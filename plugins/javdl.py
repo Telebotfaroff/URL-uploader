@@ -259,11 +259,13 @@ async def _dashboard_refresh(status, force=False):
         dashboard["last_refresh_at"] = now
         downloads = list(dashboard["downloads"].values())
         uploads = list(dashboard["uploads"].values())
-        lines = [
-            f"📊 BATCH • {dashboard['mode'].upper()}",
-            "",
-            f"⬇️ DOWNLOADING ({len(downloads)})",
-        ]
+        lines = [f"📊 BATCH • {dashboard['mode'].upper()}"]
+        channel_index = dashboard.get("channel_index")
+        channel_total = dashboard.get("channel_total")
+        channel_name = dashboard.get("channel_name")
+        if channel_index and channel_total:
+            lines.append(f"📚 CHANNEL {channel_index}/{channel_total} • {channel_name or 'Listing'}")
+        lines.extend(["", f"⬇️ DOWNLOADING ({len(downloads)})"])
         lines.extend(_format_active_transfer(item) for item in downloads[:4])
         if len(downloads) > 4:
             lines.append(f"• +{len(downloads) - 4} more downloads")
@@ -282,6 +284,11 @@ async def _dashboard_refresh(status, force=False):
             f"✅ Complete: {dashboard['completed']}/{dashboard['total']}  •  ⏳ Queue: {queued}",
             f"⏭️ Skipped: {dashboard['skipped']}  •  ❌ Failed: {dashboard['failed']}",
         ])
+        if channel_index and channel_total:
+            run_uploaded = dashboard.get("run_uploaded_base", 0) + dashboard["completed"]
+            run_skipped = dashboard.get("run_skipped_base", 0) + dashboard["skipped"]
+            run_failed = dashboard.get("run_failed_base", 0) + dashboard["failed"]
+            lines.append(f"📈 Run totals: {run_uploaded} uploaded • {run_skipped} skipped • {run_failed} failed")
         # The dashboard itself is throttled above, so force the edit here; the
         # generic status-message throttle would otherwise drop fresh progress.
         await _safe_edit(status, "\n".join(lines), force=True)
@@ -554,7 +561,7 @@ def _channel_keyboard(skip_uploaded=True, speed=DEFAULT_PARALLEL_SPEED):
     ])
 
 
-async def _process_channel(bot, message, state, user_id, all_pages=False, selected_page=None):
+async def _process_channel(bot, message, state, user_id, all_pages=False, selected_page=None, status_message=None):
     if user_id in active_batch_users:
         return await message.reply_text("⏳ A batch is already running. Let it finish before starting another.")
     active_batch_users.add(user_id)
@@ -573,7 +580,7 @@ async def _process_channel(bot, message, state, user_id, all_pages=False, select
     pipeline_slots = asyncio.Semaphore(upload_limit * 2)
     worker_count = download_limit + upload_limit
     try:
-        status = await message.reply_text("⏳ Preparing channel download queue…")
+        status = status_message or await message.reply_text("⏳ Preparing channel download queue…")
         total_pages = max(1, min(int(state.get("total_pages") or 1), MAX_CHANNEL_PAGES))
         if selected_page is not None:
             if not 1 <= int(selected_page) <= total_pages:
@@ -622,7 +629,10 @@ async def _process_channel(bot, message, state, user_id, all_pages=False, select
                 await db.clear_batch_checkpoint(user_id)
             except Exception:
                 logger.exception("Could not clear completed batch checkpoint")
-            return
+            return {
+                "status": "empty", "uploaded": 0, "failed": 0,
+                "skipped": skipped, "already_uploaded": already_uploaded,
+            }
         try:
             checkpoint = {
                 "url": state["url"], "type": state.get("listing_type", "channel"),
@@ -640,6 +650,12 @@ async def _process_channel(bot, message, state, user_id, all_pages=False, select
         _BATCH_DASHBOARDS[_dashboard_key(status)] = {
             "mode": speed, "total": len(jobs), "completed": 0, "failed": 0,
             "skipped": skipped, "downloads": {}, "uploads": {},
+            "channel_index": state.get("batch_channel_index"),
+            "channel_total": state.get("batch_channel_total"),
+            "channel_name": state.get("channel_name"),
+            "run_uploaded_base": state.get("run_uploaded_base", 0),
+            "run_skipped_base": state.get("run_skipped_base", 0),
+            "run_failed_base": state.get("run_failed_base", 0),
         }
         await _dashboard_refresh(status, force=True)
 
@@ -712,10 +728,20 @@ async def _process_channel(bot, message, state, user_id, all_pages=False, select
                 await db.clear_batch_checkpoint(user_id)
             except Exception:
                 logger.exception("Could not clear completed batch checkpoint")
+        return {
+            "status": "completed" if failed == 0 else "completed_with_failures",
+            "uploaded": uploaded, "failed": failed,
+            "skipped": skipped, "already_uploaded": already_uploaded,
+        }
     except Exception as exc:
         logger.exception("Channel batch failed for user %s", user_id)
         if status is not None:
             await _safe_edit(status, f"❌ Channel processing failed\n{type(exc).__name__}: {str(exc)[:700]}")
+        return {
+            "status": "error", "uploaded": uploaded, "failed": failed,
+            "skipped": skipped, "already_uploaded": already_uploaded,
+            "error": f"{type(exc).__name__}: {str(exc)[:300]}",
+        }
     finally:
         if status is not None:
             _BATCH_DASHBOARDS.pop(_dashboard_key(status), None)
@@ -726,7 +752,7 @@ async def _process_channel(bot, message, state, user_id, all_pages=False, select
 
 @Client.on_message(filters.private & filters.command(["channels"], ["/", "."]))
 async def saved_channels_command(bot, message):
-    """Process the repository's saved channel URLs sequentially, one channel at a time."""
+    """Process saved channel URLs sequentially with a durable run manifest."""
     if not message.from_user:
         return
     user_id = message.from_user.id
@@ -735,30 +761,87 @@ async def saved_channels_command(bot, message):
     if user_id in active_saved_batches:
         return await message.reply_text("⏳ Your saved-channel batch is already running.")
     active_saved_batches.add(user_id)
-    status = await message.reply_text("🔎 Reading saved channel URLs from GitHub…")
-    errors = []
-    completed = 0
+    status = await message.reply_text("🔎 Checking saved-channel run…")
+    setting_key = f"saved_channels_run_{user_id}"
     try:
         try:
-            urls = await asyncio.to_thread(_load_saved_channel_urls_sync)
+            raw_run = await db.get_setting(setting_key)
+            run = json.loads(raw_run) if raw_run else None
+            if not isinstance(run, dict) or not isinstance(run.get("urls"), list) or not run.get("urls"):
+                run = None
         except Exception as exc:
-            logger.exception("Could not load saved channel URLs from GitHub")
+            logger.exception("Could not read saved-channel run manifest")
             return await _safe_edit(
                 status,
-                f"❌ Could not read the data/ folder from GitHub.\n{type(exc).__name__}: {str(exc)[:500]}",
+                f"❌ Could not read saved-channel checkpoint: {type(exc).__name__}. Check DATABASE_URL.",
             )
-        if not urls:
-            return await _safe_edit(
+
+        if run:
+            urls = [str(url) for url in run["urls"] if isinstance(url, str) and url.strip()]
+            next_index = max(0, min(int(run.get("next_index") or 0), len(urls)))
+            await _safe_edit(
                 status,
-                "ℹ️ No Javtiful /channel/ URLs were found in text files inside the repository's data/ folder.",
+                f"🔄 Resuming saved-channel run at channel {min(next_index + 1, len(urls))}/{len(urls)}.\n"
+                "The current channel may be rescanned; Neon upload history skips videos already uploaded.",
             )
-        await _safe_edit(
-            status,
-            f"📚 Found {len(urls)} saved channel URL(s).\n"
-            "🔒 Processing strictly one channel at a time; each channel will finish before the next starts.",
-        )
-        for index, url in enumerate(urls, start=1):
-            await _safe_edit(status, f"📺 Channel {index}/{len(urls)}\\n🔎 Inspecting: {url}")
+            run["urls"] = urls
+            run["next_index"] = next_index
+        else:
+            await _safe_edit(status, "🔎 Reading saved channel URLs from GitHub…")
+            try:
+                urls = await asyncio.to_thread(_load_saved_channel_urls_sync)
+            except Exception as exc:
+                logger.exception("Could not load saved channel URLs from GitHub")
+                return await _safe_edit(
+                    status,
+                    f"❌ Could not read the data/ folder from GitHub.\n{type(exc).__name__}: {str(exc)[:500]}",
+                )
+            if not urls:
+                return await _safe_edit(
+                    status,
+                    "ℹ️ No Javtiful /channel/ URLs were found in text files inside the repository's data/ folder.",
+                )
+            run = {
+                "urls": urls,
+                "next_index": 0,
+                "completed_channels": 0,
+                "channel_errors": [],
+                "uploaded": 0,
+                "failed_videos": 0,
+                "skipped": 0,
+                "already_uploaded": 0,
+            }
+            try:
+                await db.set_setting(setting_key, json.dumps(run))
+            except Exception as exc:
+                logger.exception("Could not save saved-channel run manifest")
+                return await _safe_edit(
+                    status,
+                    f"❌ Could not save run checkpoint: {type(exc).__name__}. Check DATABASE_URL.",
+                )
+            await _safe_edit(
+                status,
+                f"📚 Found {len(urls)} saved channel URL(s).\n"
+                "🔒 Processing strictly one channel at a time.",
+            )
+
+        urls = run["urls"]
+        completed = int(run.get("completed_channels") or 0)
+        errors = list(run.get("channel_errors") or [])
+        uploaded_total = int(run.get("uploaded") or 0)
+        failed_videos_total = int(run.get("failed_videos") or 0)
+        skipped_total = int(run.get("skipped") or 0)
+        already_uploaded_total = int(run.get("already_uploaded") or 0)
+
+        for index in range(int(run.get("next_index") or 0), len(urls)):
+            url = urls[index]
+            run["current_index"] = index
+            run["current_url"] = url
+            try:
+                await db.set_setting(setting_key, json.dumps(run))
+            except Exception:
+                logger.exception("Could not update saved-channel checkpoint before channel %s", index + 1)
+
             try:
                 info = await asyncio.to_thread(channel_extractor.inspect, url)
                 state = {
@@ -766,37 +849,86 @@ async def saved_channels_command(bot, message):
                     "listing_type": "channel",
                     "speed": DEFAULT_PARALLEL_SPEED,
                     "url": url,
-                    "channel_name": info.get("channel_name") or f"Channel {index}",
+                    "channel_name": info.get("channel_name") or f"Channel {index + 1}",
                     "total_pages": max(1, int(info.get("total_pages") or 1)),
                     "total_videos": info.get("total_videos"),
                     "first_page": {"items": info.get("first_page_items") or []},
                     "skip_uploaded": True,
+                    "batch_channel_index": index + 1,
+                    "batch_channel_total": len(urls),
+                    "run_uploaded_base": uploaded_total,
+                    "run_skipped_base": skipped_total,
+                    "run_failed_base": failed_videos_total,
                 }
                 pending[user_id] = state
                 await _safe_edit(
                     status,
-                    f"▶️ Processing channel {index}/{len(urls)}\\n"
-                    f"📺 {state['channel_name']}\\n"
-                    "⏭️ Already-uploaded videos will be skipped.",
+                    f"📚 SAVED CHANNELS • {DEFAULT_PARALLEL_SPEED.upper()}\n"
+                    f"📺 Channel {index + 1}/{len(urls)} • {state['channel_name']}\n"
+                    f"🎬 Videos: {info.get('total_videos') if info.get('total_videos') is not None else 'Unknown'}"
+                    f" • 📄 Pages: {state['total_pages']}\n"
+                    f"📈 Run totals: {uploaded_total} uploaded • {skipped_total} skipped • {failed_videos_total} failed",
                 )
-                await _process_channel(bot, status, state, user_id, all_pages=True)
+                result = await _process_channel(
+                    bot, status, state, user_id, all_pages=True, status_message=status
+                )
+                result = result if isinstance(result, dict) else {
+                    "status": "error", "uploaded": 0, "failed": 0,
+                    "skipped": 0, "already_uploaded": 0,
+                    "error": "Channel processor returned no result",
+                }
+                uploaded_total += int(result.get("uploaded") or 0)
+                failed_videos_total += int(result.get("failed") or 0)
+                skipped_total += int(result.get("skipped") or 0)
+                already_uploaded_total += int(result.get("already_uploaded") or 0)
                 completed += 1
+                if result.get("status") == "error":
+                    errors.append({"url": url, "error": result.get("error", "Processing failed")})
             except Exception as exc:
-                errors.append((url, f"{type(exc).__name__}: {str(exc)[:180]}"))
+                errors.append({"url": url, "error": f"{type(exc).__name__}: {str(exc)[:180]}"})
                 logger.exception("Saved channel failed: %s", url)
-                await _safe_edit(status, f"⚠️ Channel {index}/{len(urls)} failed; moving to the next one.\\n{str(exc)[:250]}")
+                await _safe_edit(
+                    status,
+                    f"⚠️ Channel {index + 1}/{len(urls)} failed; moving to the next one.\n"
+                    f"{type(exc).__name__}: {str(exc)[:250]}",
+                )
+
+            run.update({
+                "next_index": index + 1,
+                "completed_channels": completed,
+                "channel_errors": errors,
+                "uploaded": uploaded_total,
+                "failed_videos": failed_videos_total,
+                "skipped": skipped_total,
+                "already_uploaded": already_uploaded_total,
+            })
+            run.pop("current_index", None)
+            run.pop("current_url", None)
+            try:
+                await db.set_setting(setting_key, json.dumps(run))
+            except Exception:
+                logger.exception("Could not persist saved-channel checkpoint after channel %s", index + 1)
+
         summary = (
-            f"🏁 Saved-channel batch finished\\n\\n"
-            f"📚 Total saved channels: {len(urls)}\\n"
-            f"✅ Channels processed: {completed}\\n"
-            f"⚠️ Channels with inspection errors: {len(errors)}\\n\\n"
-            "Only one channel was processed at a time. Re-run /channels to retry; upload history will skip videos already uploaded."
+            f"🏁 Saved-channel batch finished\n\n"
+            f"📚 Total saved channels: {len(urls)}\n"
+            f"✅ Channels completed: {completed}\n"
+            f"📤 Videos uploaded: {uploaded_total}\n"
+            f"⏭️ Videos skipped: {skipped_total} (already uploaded: {already_uploaded_total})\n"
+            f"❌ Video failures: {failed_videos_total}\n"
+            f"⚠️ Channels with errors: {len(errors)}\n\n"
+            "Channels were processed sequentially. Run /channels again to rescan the current GitHub URL list; upload history skips successful uploads."
         )
         if errors:
-            summary += "\n\nFailed to inspect:\n" + "\n".join(
-                f"• {url}" for url, _ in errors[:8]
+            summary += "\n\nChannels with errors:\n" + "\n".join(
+                f"• {item.get('url', 'Unknown URL')}" if isinstance(item, dict) else f"• {item}"
+                for item in errors[:8]
             )
         await _safe_edit(status, summary)
+        try:
+            await db.set_setting(setting_key, None)
+        except Exception:
+            logger.exception("Could not clear completed saved-channel manifest")
     finally:
         active_saved_batches.discard(user_id)
         pending.pop(user_id, None)
