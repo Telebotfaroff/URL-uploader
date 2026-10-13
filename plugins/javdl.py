@@ -628,6 +628,13 @@ async def _process_channel(bot, message, state, user_id, all_pages=False, select
                     await db.set_setting(run_setting_key, json.dumps(run_manifest))
                 except Exception:
                     logger.exception("Could not persist page checkpoint for saved channel %s", page_number + 1)
+            if state.get("batch_channel_index"):
+                await _safe_edit(
+                    status,
+                    f"🔎 SAVED CHANNELS • Channel {state['batch_channel_index']}/{state['batch_channel_total']}\\n"
+                    f"📺 {state.get('channel_name', 'Listing')}\\n"
+                    f"📄 Scanning page {page_number + 1}/{len(pages)} • {len(jobs)} new videos queued",
+                )
         if not jobs:
             await _safe_edit(status, 
                 f"🏁 Nothing to upload.\n\n📺 {state.get('channel_name', 'Channel')}\n"
